@@ -182,6 +182,7 @@ const SnapshotsListView: React.FC<React.PropsWithChildren<SnapshotsListViewProps
                   data-test="snapshots-list-filter-dropdown"
                   isExpanded={isOpen}
                   onClick={() => setIsOpen(!isOpen)}
+                  data-test="snapshots-list-filter-dropdown"
                 >
                   {FILTER_TYPE_LABELS[activeFilter]}
                 </MenuToggle>
