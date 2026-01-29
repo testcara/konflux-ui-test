@@ -45,15 +45,6 @@ export class Common {
     });
   }
 
-  static openApplicationsPage() {
-    Common.navigateTo(NavItem.namespaces);
-    cy.get(
-      goToApplicationsPagePo(`${Cypress.env('HAC_NAMESPACE')}`).goToApplicationsPagePo,
-    ).click();
-    Common.waitForLoad();
-    Common.verifyPageTitle(pageTitles.applications);
-  }
-
   static waitForLoad(timeout = 120000) {
     for (const item of Object.values(waits)) {
       cy.get(item, { timeout }).should('not.exist');
