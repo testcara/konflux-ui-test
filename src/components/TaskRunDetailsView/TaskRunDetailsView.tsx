@@ -6,8 +6,13 @@ import { PipelineRunLabel, runStatus } from '~/consts/pipelinerun';
 import { CONFORMA_TASK } from '~/consts/security';
 import { getErrorState } from '~/shared/utils/error-utils';
 import { TektonResourceLabel } from '~/types';
+<<<<<<< HEAD
 import { downloadYamlAction } from '~/utils/common-utils';
 import { isResourceEnterpriseContract } from '~/utils/conforma-utils';
+=======
+import { downloadYaml } from '~/utils/common-utils';
+import { isResourceEnterpriseContract } from '~/utils/enterprise-contract-utils';
+>>>>>>> caf322f (feat(KFLUXUI-1001): show Conforma results in pipeline security tab (#661))
 import { taskRunStatus } from '~/utils/pipeline-utils';
 import { FeatureFlagIndicator } from '../../feature-flags/FeatureFlagIndicator';
 import { useTaskRunV2 } from '../../hooks/useTaskRunsV2';
@@ -20,7 +25,10 @@ import {
 import { useNamespace } from '../../shared/providers/Namespace';
 import { useApplicationBreadcrumbs } from '../Applications/breadcrumbs/breadcrumb-utils';
 import { DetailsPage } from '../DetailsPage';
+<<<<<<< HEAD
 import { createDetailsPageAction } from '../DetailsPage/utils';
+=======
+>>>>>>> caf322f (feat(KFLUXUI-1001): show Conforma results in pipeline security tab (#661))
 import { StatusIconWithTextLabel } from '../topology/StatusIcon';
 
 export const TaskRunDetailsView: React.FC = () => {
