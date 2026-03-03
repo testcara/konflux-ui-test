@@ -86,7 +86,7 @@ spec:
             value: tasks/mapt-oci/kind-aws-spot/provision/0.2/kind-aws-provision.yaml
       params:
         - name: secret-aws-credentials
-          value: konflux-test-infra
+          value: mapt-kind-secret
         - name: cluster-access-secret-name
           value: kfg-$(context.pipelineRun.name)
         - name: id
