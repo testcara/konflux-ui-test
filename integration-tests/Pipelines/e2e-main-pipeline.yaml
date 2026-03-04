@@ -168,7 +168,7 @@ spec:
             value: tasks/mapt-oci/kind-aws-spot/deprovision/0.1/kind-aws-deprovision.yaml
       params:
         - name: secret-aws-credentials
-          value: mapt-kind-secret
+          value: konflux-test-infra
         - name: id
           value: $(context.pipelineRun.name)
         - name: cluster-access-secret
@@ -176,7 +176,7 @@ spec:
         - name: oci-container
           value: $(params.oci-container-repo):$(context.pipelineRun.name)
         - name: oci-credentials
-          value: konflux-test-infra
+          value: quay-secret
     - name: pull-request-status-message
       when:
         - input: '$(tasks.konflux-ui-pr-metadata.results.pull-request-author)'
