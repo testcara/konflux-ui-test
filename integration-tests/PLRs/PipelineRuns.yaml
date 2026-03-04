@@ -1,0 +1,31 @@
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  generateName: e2e-test-
+  namespace: wlin-tenant
+spec:
+  pipelineRef:
+    resolver: git
+    params:
+      - name: url
+        value: https://github.com/testcara/konflux-ui-test
+      - name: revision
+        value: main
+      - name: pathInRepo
+        value: integration-tests/Pipelines/e2e-main-pipeline.yaml
+  params:
+    # IMPORTANT: Replace with actual component name and image from your build
+    # Example: quay.io/redhat-user-workloads-stage/wlin-tenant/cara-konflux-ui-test-b1228@sha256:...
+    - name: SNAPSHOT
+      value: '{"components": [{"name":"cara-konflux-ui-test-b1228", "containerImage": "quay.io/redhat-user-workloads-stage/wlin-tenant/cara-konflux-ui-test-b1228:latest"}]}'
+    - name: konflux-test-infra-secret
+      value: konflux-test-infra
+    - name: oci-credentials-secret
+      value: quay-secret
+    - name: github-credentials-secret
+      value: github-credentials
+    - name: cypress-credentials-secret
+      value: cypress-credentials
+    - name: slack-credentials-secret
+      value: slack-credentials
+  timeout: 2h0m0s

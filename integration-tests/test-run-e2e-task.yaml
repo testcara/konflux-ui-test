@@ -1,0 +1,46 @@
+---
+apiVersion: tekton.dev/v1beta1
+kind: TaskRun
+metadata:
+  generateName: test-run-e2e-
+  namespace: wlin-tenant
+spec:
+  taskRef:
+    resolver: git
+    params:
+      - name: url
+        value: https://github.com/testcara/konflux-ui-test
+      - name: revision
+        value: main
+      - name: pathInRepo
+        value: integration-tests/Tasks/run-e2e-konflux-ui.yaml
+  params:
+    - name: job-spec
+      value: |
+        {
+          "container_image": "quay.io/redhat-user-workloads-stage/wlin-tenant/cara-konflux-ui-test-b1228:latest",
+          "konflux_component": "cara-konflux-ui-test-b1228",
+          "git": {
+            "pull_request_number": null,
+            "pull_request_author": null,
+            "git_org": "testcara",
+            "git_repo": "konflux-ui-test",
+            "commit_sha": "f1be336",
+            "event_type": "push",
+            "source_repo_url": "https://github.com/testcara/konflux-ui-test",
+            "source_repo_branch": "refs/heads/main",
+            "target_repo_branch": "main"
+          }
+        }
+    - name: job-type
+      value: ""
+    - name: git-url
+      value: https://github.com/testcara/konflux-ui-test
+    - name: git-revision
+      value: main
+    - name: cypress-credentials-secret
+      value: cypress-credentials
+    - name: slack-credentials-secret
+      value: slack-credentials
+    - name: github-credentials-secret
+      value: github-credentials

@@ -1,0 +1,81 @@
+---
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: check-org-membership
+  annotations:
+    tekton.dev/displayName: 'konflux-ui-org-membership'
+    tekton.dev/categories: 'Pipeline'
+    tekton.dev/tags: 'config,rhads'
+spec:
+  description: >-
+    checks org membership for konflux-ui
+  params:
+    - name: job-spec
+      description: 'Job specification metadata'
+      type: string
+    - name: github-credentials-secret
+      description: 'Secret name containing GitHub token'
+      type: string
+      default: "github-credentials"
+  results:
+    - name: membership-result
+      description: 'The RHADS configuration content (base64 encoded)'
+  steps:
+    - name: check-org-membership
+      image: quay.io/konflux-ci/appstudio-utils:ab6b0b8e40e440158e7288c73aff1cf83a2cc8a9@sha256:24179f0efd06c65d16868c2d7eb82573cce8e43533de6cea14fec3b7446e0b14
+      env:
+        - name: JOB_SPEC
+          value: $(params.job-spec)
+        - name: GITHUB_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: $(params.github-credentials-secret)
+              key: token
+              optional: true
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        # First check event type - if not PR, skip all checks
+        EVENT_TYPE=$(jq -r '.git.event_type' <<< "$JOB_SPEC")
+
+        if [ "$EVENT_TYPE" != 'pull_request' ]; then
+            echo "The workflow is not triggered from PR, but $EVENT_TYPE - skipping further checks."
+            exit 0
+        fi
+
+        # Only parse PR-specific fields if this is a PR event
+        SOURCE_REPO_URL=$(jq -r '.git.source_repo_url' <<< "$JOB_SPEC")
+        PR_AUTHOR=$(jq -r '.git.pull_request_author // "unknown"' <<< "$JOB_SPEC")
+        PR_LABELS=$(jq -r '.git.pull_request_labels // ""' <<< "$JOB_SPEC")
+
+        echo "$PR_AUTHOR $PR_LABELS"
+
+        WHITELISTED_BOT_NAME=("red-hat-konflux[bot]" "konflux-staging[bot]")
+        REQUIRED_LABEL_NAME="ok-to-test"
+
+        ORG=$(jq -r '.git.git_org // "unknown"' <<< "$JOB_SPEC")
+
+        for bot in "${WHITELISTED_BOT_NAME[@]}"; do
+          if [[ "$bot" == "$PR_AUTHOR" ]]; then
+            echo "PR author is a whitelisted bot, skipping further checks."
+            exit 0
+          fi
+        done
+
+        if [[ "$PR_LABELS" == *$REQUIRED_LABEL_NAME* ]]; then
+          echo "PR has '$REQUIRED_LABEL_NAME' label, skipping further checks."
+          exit 0
+        fi
+
+        ALLOWED_USERS=("Katka92" "rrosatti" "janaki29" "sahil143" "testcara" "milantaky" "StanislavJochman" "JoaoPedroPP" "rakshett" "abhinandan13jan" "marcin-michal")
+        for author in "${ALLOWED_USERS[@]}"; do
+          if [[ "$author" == "$PR_AUTHOR" ]]; then
+            echo "PR author is in ALLOWED_USERS list. Running E2E tests."
+            exit 0
+          fi
+        done
+
+        echo "Still allowing. change this to exit 1 later"
+        exit 0

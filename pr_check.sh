@@ -7,7 +7,7 @@ export TEST_IMAGE="quay.io/konflux_ui_qe/konflux-ui-tests:latest"
 
 build_ui_image() {
     set -euo pipefail
-
+    # add debug by cara
     echo "Building UI from commit sha ${HEAD_SHA}"
 
     export IMAGE_NAME=localhost/test/test
