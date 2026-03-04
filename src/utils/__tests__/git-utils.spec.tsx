@@ -8,6 +8,11 @@ jest.mock(
   () => (props: { 'aria-label'?: string }) => React.createElement('svg', props),
 );
 
+jest.mock(
+  '../../shared/assets/forgejo-logo.svg',
+  () => (props: { 'aria-label'?: string }) => React.createElement('svg', props),
+);
+
 describe('git-utils', () => {
   describe('getGitIcon', () => {
     it('should return GitHub icon', () => {
