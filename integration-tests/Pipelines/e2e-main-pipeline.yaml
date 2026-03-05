@@ -17,7 +17,7 @@ spec:
       description: The key secret from konflux-test-infra-secret where all AWS ROSA configurations are stored.
       type: string
     - name: oci-container-repo
-      default: 'quay.io/repository/wlin/konflux-ui-test'
+      default: 'quay.io/carawang/konflux-ui-test'
       description: The ORAS container used to store all test artifacts.
     - name: artifact-browser-url
       description: 'URL to the artifact browser deployment. If provided, a link will be added to PR comments.'
