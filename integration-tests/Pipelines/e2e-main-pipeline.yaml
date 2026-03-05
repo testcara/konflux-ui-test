@@ -140,7 +140,7 @@ spec:
           value: $(tasks.konflux-ui-pr-metadata.results.source-repo-branch)
         - name: oci-ref
           value: $(params.oci-container-repo):$(context.pipelineRun.name)
-        - name: credentials-secret-name
+        - name: oci-credentials
           value: quay-secret
     - name: run-e2e-konflux-ui
       when:
