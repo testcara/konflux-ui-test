@@ -161,6 +161,10 @@ spec:
       params:
         - name: job-spec
           value: '$(tasks.konflux-ui-pr-metadata.results.job-spec)'
+        - name: git-url
+          value: 'https://github.com/$(tasks.konflux-ui-pr-metadata.results.git-org)/$(tasks.konflux-ui-pr-metadata.results.git-repo)'
+        - name: git-revision
+          value: '$(tasks.konflux-ui-pr-metadata.results.git-revision)'
   finally:
     - name: deprovision-kind-cluster
       when:
