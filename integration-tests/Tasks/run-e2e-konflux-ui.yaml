@@ -120,11 +120,11 @@ spec:
         SPEC_FILE="tests/basic-happy-path.spec.ts"
         echo "Running tests from ${SPEC_FILE}"
 
-        # Ensure all required env vars are exported
-        export GH_TOKEN
-        export CYPRESS_USERNAME
-        export CYPRESS_PASSWORD
-
+        # Run Cypress with explicit environment variables
+        # This ensures the variables are passed to the Node.js process
+        GH_TOKEN="${GH_TOKEN}" \
+        CYPRESS_USERNAME="${CYPRESS_USERNAME}" \
+        CYPRESS_PASSWORD="${CYPRESS_PASSWORD}" \
         npx cypress run -b chrome --spec "${SPEC_FILE}" || EXIT_CODE=$?
 
         # Store the exit code
