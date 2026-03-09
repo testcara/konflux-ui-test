@@ -23,6 +23,18 @@ spec:
       description: 'URL to the artifact browser deployment. If provided, a link will be added to PR comments.'
       default: ''
       type: string
+    - name: github-credentials-secret
+      description: 'Secret name containing GitHub token'
+      default: 'github-credentials'
+      type: string
+    - name: cypress-credentials-secret
+      description: 'Secret name containing Cypress credentials'
+      default: 'cypress-credentials'
+      type: string
+    - name: slack-credentials-secret
+      description: 'Secret name containing Slack credentials'
+      default: 'slack-credentials'
+      type: string
   tasks:
     - name: konflux-ui-pr-metadata
       taskRef:
@@ -68,6 +80,8 @@ spec:
       params:
         - name: job-spec
           value: $(tasks.konflux-ui-pr-metadata.results.job-spec)
+        - name: github-credentials-secret
+          value: $(params.github-credentials-secret)
     - name: provision-kind-cluster
       runAfter:
         - check-org-membership
@@ -165,6 +179,10 @@ spec:
           value: 'https://github.com/testcara/konflux-ui-test'
         - name: git-revision
           value: 'main'
+        - name: cypress-credentials-secret
+          value: $(params.cypress-credentials-secret)
+        - name: slack-credentials-secret
+          value: $(params.slack-credentials-secret)
   finally:
     - name: deprovision-kind-cluster
       when:

@@ -25,6 +25,14 @@ spec:
       description: 'Git revision to checkout'
       type: string
       default: "main"
+    - name: cypress-credentials-secret
+      description: 'Secret name containing Cypress credentials (username, password)'
+      type: string
+      default: "cypress-credentials"
+    - name: slack-credentials-secret
+      description: 'Secret name containing Slack credentials'
+      type: string
+      default: "slack-credentials"
   results:
     - name: e2e-output
       description: 'Result of e2e test'
@@ -65,6 +73,16 @@ spec:
           value: "true"
         - name: CYPRESS_PERIODIC_RUN_STAGE
           value: "false"
+        - name: CYPRESS_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: $(params.cypress-credentials-secret)
+              key: username
+        - name: CYPRESS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: $(params.cypress-credentials-secret)
+              key: password
       script: |
         #!/usr/bin/env bash
         set -euo pipefail
@@ -101,6 +119,18 @@ spec:
       env:
         - name: JOB_TYPE
           value: $(params.job-type)
+        - name: SLACK_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: $(params.slack-credentials-secret)
+              key: token
+              optional: true
+        - name: SLACK_CHANNEL_ID
+          valueFrom:
+            configMapKeyRef:
+              name: slack-config
+              key: channel-id
+              optional: true
       script: |
         #!/usr/bin/env bash
 

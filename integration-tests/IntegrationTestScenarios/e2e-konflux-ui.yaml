@@ -16,13 +16,19 @@ spec:
       value: konflux-test-infra
     - name: cloud-credential-key
       value: rhtap-cloud-credentials-us-east-1
+    - name: github-credentials-secret
+      value: github-credentials
+    - name: cypress-credentials-secret
+      value: cypress-credentials
+    - name: slack-credentials-secret
+      value: slack-credentials
   resolverRef:
     params:
       - name: url
-        value: https://github.com/abhinandan13jan/konflux-ui/tree/add-e2e-workflow
+        value: https://github.com/testcara/konflux-ui-test
       - name: revision
         value: main
       - name: pathInRepo
-        value: integration-test/pipelines/e2e-main-pipeline.yaml
+        value: integration-tests/Pipelines/e2e-main-pipeline.yaml
     resolver: git
     resourceKind: pipeline
