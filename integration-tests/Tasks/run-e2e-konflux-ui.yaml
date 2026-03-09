@@ -51,8 +51,8 @@ spec:
         echo "Repository cloned successfully"
         ls -la
     - name: run-e2e-test
-      image: quay.io/konflux-ci/appstudio-utils:ab6b0b8e40e440158e7288c73aff1cf83a2cc8a9@sha256:24179f0efd06c65d16868c2d7eb82573cce8e43533de6cea14fec3b7446e0b14
-      workingDir: /workspace/source/repo
+      image: quay.io/konflux_ui_qe/konflux-ui-tests:latest
+      workingDir: /e2e
       volumeMounts:
         - name: source
           mountPath: /workspace/source
@@ -61,21 +61,36 @@ spec:
           value: $(params.job-spec)
         - name: JOB_TYPE
           value: $(params.job-type)
+        - name: CYPRESS_LOCAL_CLUSTER
+          value: "true"
+        - name: CYPRESS_PERIODIC_RUN_STAGE
+          value: "false"
       script: |
         #!/usr/bin/env bash
         set -euo pipefail
 
-        # Run Konflux UI E2E tests
+        echo "Running Cypress E2E tests"
+        echo "Job Type: ${JOB_TYPE}"
+
+        # Determine test configuration based on job type
         if [[ ${JOB_TYPE} == 'periodic-stage' ]]; then
           echo "Running test suite against stage backend..."
-          ./pr_check.sh test-stage
+          export CYPRESS_LOCAL_CLUSTER=false
+          export CYPRESS_PERIODIC_RUN_STAGE=true
         else
-          echo "Running test suite against local Konflux UI and backend"
-          ./pr_check.sh test
+          echo "Running test suite against local Konflux UI in kind cluster"
         fi
 
+        # Run Cypress tests directly (test image already contains test code in /e2e)
+        SPEC_FILE="/e2e/tests/basic-happy-path.spec.ts"
+        echo "Running tests from ${SPEC_FILE}"
+
+        npx cypress run --spec "${SPEC_FILE}" || EXIT_CODE=$?
+
         # Store the exit code
-        echo $? > /tmp/e2e-exit-code
+        EXIT_CODE=${EXIT_CODE:-0}
+        echo ${EXIT_CODE} > /tmp/e2e-exit-code
+        exit ${EXIT_CODE}
 
     - name: report-to-slack
       image: quay.io/konflux-ci/appstudio-utils:ab6b0b8e40e440158e7288c73aff1cf83a2cc8a9@sha256:24179f0efd06c65d16868c2d7eb82573cce8e43533de6cea14fec3b7446e0b14
