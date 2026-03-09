@@ -134,10 +134,6 @@ spec:
 
     - name: report-to-slack
       image: quay.io/konflux-ci/appstudio-utils:ab6b0b8e40e440158e7288c73aff1cf83a2cc8a9@sha256:24179f0efd06c65d16868c2d7eb82573cce8e43533de6cea14fec3b7446e0b14
-      workingDir: /workspace/source/repo
-      volumeMounts:
-        - name: source
-          mountPath: /workspace/source
       env:
         - name: JOB_TYPE
           value: $(params.job-type)
@@ -153,15 +149,71 @@ spec:
               name: slack-config
               key: channel-id
               optional: true
+        - name: PIPELINE_RUN_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.labels['tekton.dev/pipelineRun']
+        - name: NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
       script: |
         #!/usr/bin/env bash
 
-        # Report job result to Slack (always runs)
+        # Only send Slack report for periodic jobs
+        if [[ ! ${JOB_TYPE} == periodic* ]]; then
+          echo "Not a periodic job (JOB_TYPE=${JOB_TYPE}), skipping Slack report"
+          exit 0
+        fi
+
+        # Check if Slack is configured
+        if [[ -z "${SLACK_TOKEN}" || -z "${SLACK_CHANNEL_ID}" ]]; then
+          echo "Slack not configured, skipping report"
+          exit 0
+        fi
+
+        # Determine test outcome
         E2E_OUTCOME="success"
         if [[ -f /tmp/e2e-exit-code ]] && [[ $(cat /tmp/e2e-exit-code) -ne 0 ]]; then
           E2E_OUTCOME="failure"
         fi
 
-        if [[ ${JOB_TYPE} == periodic* ]]; then
-          ./pr_check.sh send-report ${E2E_OUTCOME}
+        # Generate message
+        if [[ $E2E_OUTCOME == "success" ]]; then
+          ICON=":white_check_mark:"
+        else
+          ICON=":x:"
         fi
+
+        DATE_STR=$(date '+%b %-d')
+
+        case "$JOB_TYPE" in
+          "periodic-local")
+            JOB_DESC="LOCAL Periodic job"
+            ;;
+          "periodic-stage")
+            JOB_DESC="STAGE Periodic job"
+            ;;
+          "periodic-cleanup")
+            JOB_DESC="CLEANUP Periodic job"
+            ;;
+          *)
+            JOB_DESC="Periodic job (${JOB_TYPE})"
+            ;;
+        esac
+
+        # Add PipelineRun info to message
+        if [[ -n "${PIPELINE_RUN_NAME}" ]]; then
+          MESSAGE="${ICON} Report ${DATE_STR}: ${JOB_DESC} (PipelineRun: ${PIPELINE_RUN_NAME})"
+        else
+          MESSAGE="${ICON} Report ${DATE_STR}: ${JOB_DESC}"
+        fi
+
+        echo "Sending Slack notification: ${MESSAGE}"
+
+        # Send to Slack
+        curl -X POST https://slack.com/api/chat.postMessage \
+          -H "Authorization: Bearer ${SLACK_TOKEN}" \
+          -H "Content-Type: application/json; charset=utf-8" \
+          -d "{\"channel\": \"${SLACK_CHANNEL_ID}\", \"text\": \"${MESSAGE}\"}" \
+          || echo "Failed to send Slack notification (non-fatal)"
