@@ -139,13 +139,26 @@ spec:
           EVENT_TYPE="push"
         fi
 
+        # For push events, set PR fields to null for valid JSON
+        if [[ "$EVENT_TYPE" == "push" || -z "$PULL_REQUEST_NUMBER" || "$PULL_REQUEST_NUMBER" == "null" ]]; then
+          PR_NUMBER_JSON="null"
+        else
+          PR_NUMBER_JSON="$PULL_REQUEST_NUMBER"
+        fi
+
+        if [[ -z "$PR_AUTHOR" || "$PR_AUTHOR" == "null" ]]; then
+          PR_AUTHOR_JSON="null"
+        else
+          PR_AUTHOR_JSON="\"$PR_AUTHOR\""
+        fi
+
         JOB_SPEC=$(cat <<EOF
         {
             "container_image": "$COMPONENT_CONTAINER_IMAGE",
             "konflux_component": "$KONFLUX_COMPONENT_NAME",
             "git": {
-                "pull_request_number": $PULL_REQUEST_NUMBER,
-                "pull_request_author": "$PR_AUTHOR",
+                "pull_request_number": $PR_NUMBER_JSON,
+                "pull_request_author": $PR_AUTHOR_JSON,
                 "git_org": "$GIT_ORGANIZATION",
                 "git_repo": "$GIT_REPOSITORY",
                 "commit_sha": "$GIT_REVISION",
