@@ -33,14 +33,14 @@ spec:
       emptyDir: {}
   steps:
     - name: clone-repository
-      image: gcr.io/tekton-releases/github.com/tektoncd/pipeline/cmd/git-init:v0.40.2
+      image: quay.io/konflux-ci/appstudio-utils:ab6b0b8e40e440158e7288c73aff1cf83a2cc8a9@sha256:24179f0efd06c65d16868c2d7eb82573cce8e43533de6cea14fec3b7446e0b14
       workingDir: /workspace/source
       volumeMounts:
         - name: source
           mountPath: /workspace/source
       script: |
-        #!/usr/bin/env sh
-        set -eu
+        #!/usr/bin/env bash
+        set -euo pipefail
 
         echo "Cloning $(params.git-url) at revision $(params.git-revision)"
 
