@@ -37,22 +37,25 @@ spec:
         #!/usr/bin/env bash
         set -euo pipefail
 
-        SOURCE_REPO_URL=$(jq -r '.git.source_repo_url' <<< $JOB_SPEC)
-        EVENT_TYPE=$(jq -r '.git.event_type' <<< $JOB_SPEC)
-        PR_AUTHOR=$(jq -r '.git.pull_request_author' <<< $JOB_SPEC)
-        PR_LABELS=$(jq -r '.git.pull_request_labels' <<< $JOB_SPEC)
+        # First check event type - if not PR, skip all checks
+        EVENT_TYPE=$(jq -r '.git.event_type' <<< "$JOB_SPEC")
 
         if [ "$EVENT_TYPE" != 'pull_request' ]; then
             echo "The workflow is not triggered from PR, but $EVENT_TYPE - skipping further checks."
             exit 0
         fi
 
+        # Only parse PR-specific fields if this is a PR event
+        SOURCE_REPO_URL=$(jq -r '.git.source_repo_url' <<< "$JOB_SPEC")
+        PR_AUTHOR=$(jq -r '.git.pull_request_author // "unknown"' <<< "$JOB_SPEC")
+        PR_LABELS=$(jq -r '.git.pull_request_labels // ""' <<< "$JOB_SPEC")
+
         echo "$PR_AUTHOR $PR_LABELS"
 
         WHITELISTED_BOT_NAME=("red-hat-konflux[bot]" "konflux-staging[bot]")
         REQUIRED_LABEL_NAME="ok-to-test"
 
-        ORG=$(jq -r '.git.git_org' <<< $JOB_SPEC)
+        ORG=$(jq -r '.git.git_org // "unknown"' <<< "$JOB_SPEC")
 
         for bot in "${WHITELISTED_BOT_NAME[@]}"; do
           if [[ "$bot" == "$PR_AUTHOR" ]]; then
