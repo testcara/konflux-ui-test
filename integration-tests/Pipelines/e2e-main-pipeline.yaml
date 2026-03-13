@@ -186,6 +186,8 @@ spec:
           value: $(params.slack-credentials-secret)
         - name: github-credentials-secret
           value: $(params.github-credentials-secret)
+        - name: cluster-access-secret
+          value: 'kfg-$(context.pipelineRun.name)'
   finally:
     - name: deprovision-kind-cluster
       when:

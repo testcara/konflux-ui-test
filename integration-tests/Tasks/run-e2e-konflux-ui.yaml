@@ -37,12 +37,20 @@ spec:
       description: 'Secret name containing GitHub token'
       type: string
       default: "github-credentials"
+    - name: cluster-access-secret
+      description: 'Secret name containing kubeconfig for accessing Kind cluster'
+      type: string
+      default: ""
   results:
     - name: e2e-output
       description: 'Result of e2e test'
   volumes:
     - name: source
       emptyDir: {}
+    - name: kubeconfig
+      secret:
+        secretName: $(params.cluster-access-secret)
+        optional: true
   steps:
     - name: clone-repository
       image: quay.io/konflux-ci/appstudio-utils:ab6b0b8e40e440158e7288c73aff1cf83a2cc8a9@sha256:24179f0efd06c65d16868c2d7eb82573cce8e43533de6cea14fec3b7446e0b14
@@ -62,6 +70,61 @@ spec:
 
         echo "Repository cloned successfully"
         ls -la
+    - name: setup-port-forward
+      image: quay.io/konflux-ci/appstudio-utils:ab6b0b8e40e440158e7288c73aff1cf83a2cc8a9@sha256:24179f0efd06c65d16868c2d7eb82573cce8e43533de6cea14fec3b7446e0b14
+      volumeMounts:
+        - name: kubeconfig
+          mountPath: /credentials
+      env:
+        - name: JOB_TYPE
+          value: $(params.job-type)
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        # Skip port forwarding for periodic-stage jobs (they use remote stage environment)
+        if [[ "${JOB_TYPE}" == "periodic-stage" ]]; then
+          echo "Skipping port forward setup for periodic-stage job"
+          exit 0
+        fi
+
+        # Check if kubeconfig exists
+        if [[ ! -f /credentials/kubeconfig ]]; then
+          echo "WARNING: kubeconfig not found, skipping port forward"
+          echo "This is expected for periodic-stage jobs"
+          exit 0
+        fi
+
+        export KUBECONFIG=/credentials/kubeconfig
+
+        echo "Setting up port forward to Konflux UI in Kind cluster..."
+
+        # Wait for Konflux UI deployment to be ready
+        echo "Waiting for Konflux UI deployment..."
+        kubectl wait --for=condition=available --timeout=300s deployment/hac-dev -n konflux || {
+          echo "ERROR: Konflux UI deployment not ready"
+          kubectl get pods -n konflux
+          exit 1
+        }
+
+        # Start port forward in background
+        echo "Starting port forward from localhost:8080 to Konflux UI service..."
+        kubectl port-forward -n konflux svc/hac-dev 8080:8080 &
+        PORT_FORWARD_PID=$!
+        echo "Port forward started with PID: ${PORT_FORWARD_PID}"
+
+        # Save PID for cleanup (store in a shared location)
+        echo ${PORT_FORWARD_PID} > /tmp/port-forward-pid
+
+        # Wait a bit for port forward to establish
+        sleep 5
+
+        # Verify port forward is working
+        if ! curl -k -s -o /dev/null -w "%{http_code}" https://localhost:8080 | grep -q "200\|301\|302"; then
+          echo "WARNING: Port forward may not be working correctly"
+        else
+          echo "Port forward is working!"
+        fi
     - name: run-e2e-test
       image: quay.io/konflux_ui_qe/konflux-ui-tests:latest
       workingDir: /tmp/e2e
