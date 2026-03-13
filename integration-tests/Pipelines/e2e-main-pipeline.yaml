@@ -36,6 +36,26 @@ spec:
       description: 'Secret name containing OCI registry credentials (Quay.io)'
       default: 'quay-secret'
       type: string
+    - name: skip-provision
+      description: 'Skip provisioning Kind cluster (use existing cluster for debugging)'
+      default: 'false'
+      type: string
+    - name: skip-deploy
+      description: 'Skip deploying Konflux (use existing deployment for debugging)'
+      default: 'false'
+      type: string
+    - name: skip-deprovision
+      description: 'Skip deprovisioning Kind cluster (keep cluster for debugging)'
+      default: 'false'
+      type: string
+    - name: existing-cluster-secret
+      description: 'Name of existing cluster kubeconfig secret (when skip-provision=true)'
+      default: ''
+      type: string
+    - name: debug-pause-minutes
+      description: 'Minutes to pause for manual debugging after port-forward setup (0 to skip)'
+      default: '0'
+      type: string
   tasks:
     - name: konflux-ui-pr-metadata
       taskRef:
@@ -90,6 +110,9 @@ spec:
         - input: '$(tasks.konflux-ui-pr-metadata.results.pull-request-author)'
           operator: notin
           values: ['red-hat-konflux[bot]']
+        - input: '$(params.skip-provision)'
+          operator: in
+          values: ['false']
       taskRef:
         resolver: git
         params:
@@ -131,6 +154,9 @@ spec:
         - input: '$(tasks.konflux-ui-pr-metadata.results.pull-request-author)'
           operator: notin
           values: ['red-hat-konflux[bot]']
+        - input: '$(params.skip-deploy)'
+          operator: in
+          values: ['false']
       runAfter:
         - provision-kind-cluster
       taskRef:
@@ -188,12 +214,17 @@ spec:
           value: $(params.github-credentials-secret)
         - name: cluster-access-secret
           value: 'kfg-$(context.pipelineRun.name)'
+        - name: debug-pause-minutes
+          value: $(params.debug-pause-minutes)
   finally:
     - name: deprovision-kind-cluster
       when:
         - input: '$(tasks.konflux-ui-pr-metadata.results.pull-request-author)'
           operator: notin
           values: ['red-hat-konflux[bot]']
+        - input: '$(params.skip-deprovision)'
+          operator: in
+          values: ['false']
       taskRef:
         resolver: git
         params:

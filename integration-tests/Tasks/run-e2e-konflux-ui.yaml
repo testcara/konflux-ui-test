@@ -41,6 +41,10 @@ spec:
       description: 'Secret name containing kubeconfig for accessing Kind cluster'
       type: string
       default: ""
+    - name: debug-pause-minutes
+      description: 'Minutes to pause for manual debugging after port-forward setup (0 to skip)'
+      type: string
+      default: "0"
   results:
     - name: e2e-output
       description: 'Result of e2e test'
@@ -341,31 +345,37 @@ spec:
           exit 1
         fi
 
-        echo ""
-        echo "=========================================="
-        echo "MANUAL TESTING PAUSE - 30 MINUTES"
-        echo "=========================================="
-        echo ""
-        echo "Pausing for 30 minutes to allow manual testing..."
-        echo "During this time, you can:"
-        echo "  1. Access Konflux UI at: http://localhost:${LOCAL_PORT}"
-        echo "  2. Run Cypress tests locally with: CYPRESS_BASE_URL=http://localhost:${LOCAL_PORT}"
-        echo "  3. Check the Kind cluster with kubectl commands"
-        echo ""
-        echo "Port forward will remain active during this pause."
-        echo "Started at: $(date)"
-        echo "Will resume at: $(date -d '+30 minutes' 2>/dev/null || date -v+30M 2>/dev/null || echo 'in 30 minutes')"
-        echo ""
+        # Debug pause (configurable)
+        DEBUG_PAUSE_MINUTES=$(params.debug-pause-minutes)
 
-        # Sleep for 30 minutes (1800 seconds)
-        for i in {1..30}; do
-          echo "Minute ${i}/30 elapsed..."
-          sleep 60
-        done
+        if [[ "${DEBUG_PAUSE_MINUTES}" -gt 0 ]]; then
+          echo ""
+          echo "=========================================="
+          echo "MANUAL TESTING PAUSE - ${DEBUG_PAUSE_MINUTES} MINUTES"
+          echo "=========================================="
+          echo ""
+          echo "Pausing for ${DEBUG_PAUSE_MINUTES} minutes to allow manual testing..."
+          echo "During this time, you can:"
+          echo "  1. Access Konflux UI at: http://localhost:${LOCAL_PORT}"
+          echo "  2. Run Cypress tests locally with: CYPRESS_BASE_URL=http://localhost:${LOCAL_PORT}"
+          echo "  3. Check the Kind cluster with kubectl commands"
+          echo ""
+          echo "Port forward will remain active during this pause."
+          echo "Started at: $(date)"
+          echo ""
 
-        echo ""
-        echo "Manual testing pause completed. Continuing with automated E2E tests..."
-        echo ""
+          # Sleep for specified minutes
+          for i in $(seq 1 ${DEBUG_PAUSE_MINUTES}); do
+            echo "Minute ${i}/${DEBUG_PAUSE_MINUTES} elapsed..."
+            sleep 60
+          done
+
+          echo ""
+          echo "Manual testing pause completed. Continuing with automated E2E tests..."
+          echo ""
+        else
+          echo "Debug pause disabled (debug-pause-minutes=0), proceeding directly to E2E tests..."
+        fi
     - name: run-e2e-test
       image: quay.io/konflux_ui_qe/konflux-ui-tests:latest
       workingDir: /tmp/e2e
