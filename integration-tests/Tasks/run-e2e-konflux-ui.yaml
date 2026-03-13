@@ -99,31 +99,44 @@ spec:
 
         echo "Setting up port forward to Konflux UI in Kind cluster..."
 
-        # Wait for Konflux UI deployment to be ready
-        echo "Waiting for Konflux UI deployment..."
-        kubectl wait --for=condition=available --timeout=300s deployment/hac-dev -n konflux || {
-          echo "ERROR: Konflux UI deployment not ready"
-          kubectl get pods -n konflux
+        # List namespaces for debugging
+        echo "Available namespaces in Kind cluster:"
+        kubectl get namespaces
+
+        # Wait for Konflux UI proxy deployment to be ready
+        echo "Waiting for Konflux UI proxy deployment in konflux-ui namespace..."
+        kubectl wait --for=condition=available --timeout=300s deployment/proxy -n konflux-ui || {
+          echo "ERROR: Konflux UI proxy deployment not ready"
+          echo "Checking pods in konflux-ui namespace:"
+          kubectl get pods -n konflux-ui
+          echo "Checking deployment:"
+          kubectl get deployment proxy -n konflux-ui
           exit 1
         }
 
         # Start port forward in background
-        echo "Starting port forward from localhost:8080 to Konflux UI service..."
-        kubectl port-forward -n konflux svc/hac-dev 8080:8080 &
+        echo "Starting port forward from localhost:8080 to proxy service in konflux-ui namespace..."
+        kubectl port-forward -n konflux-ui svc/proxy 8080:8080 &
         PORT_FORWARD_PID=$!
         echo "Port forward started with PID: ${PORT_FORWARD_PID}"
 
         # Save PID for cleanup (store in a shared location)
         echo ${PORT_FORWARD_PID} > /tmp/port-forward-pid
 
-        # Wait a bit for port forward to establish
-        sleep 5
+        # Wait for port forward to establish
+        echo "Waiting for port forward to establish..."
+        sleep 10
 
         # Verify port forward is working
-        if ! curl -k -s -o /dev/null -w "%{http_code}" https://localhost:8080 | grep -q "200\|301\|302"; then
-          echo "WARNING: Port forward may not be working correctly"
+        echo "Verifying port forward..."
+        if curl -k -s -o /dev/null -w "%{http_code}" https://localhost:8080 | grep -q "200\|301\|302\|404"; then
+          echo "✓ Port forward is working on HTTPS!"
+        elif curl -s -o /dev/null -w "%{http_code}" http://localhost:8080 | grep -q "200\|301\|302\|404"; then
+          echo "✓ Port forward is working on HTTP!"
         else
-          echo "Port forward is working!"
+          echo "WARNING: Port forward may not be working correctly"
+          echo "Attempting to test connection..."
+          curl -v http://localhost:8080 2>&1 | head -20 || true
         fi
     - name: run-e2e-test
       image: quay.io/konflux_ui_qe/konflux-ui-tests:latest
