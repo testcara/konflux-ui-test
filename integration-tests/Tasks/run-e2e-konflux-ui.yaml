@@ -114,46 +114,100 @@ spec:
           exit 1
         }
 
-        # Get the service port
-        echo "Checking proxy service configuration..."
-        kubectl get svc proxy -n konflux-ui
+        echo ""
+        echo "=========================================="
+        echo "DEBUGGING INFORMATION - Konflux UI Access"
+        echo "=========================================="
+        echo ""
 
-        # According to Konflux docs, Kind forwards port 9443 to the host
-        # The proxy service typically listens on port 443 (HTTPS)
-        # We'll try port-forwarding to 9443 first (as per docs), fallback to detecting the port
+        # Get service information
+        echo "=== Service Information ==="
+        kubectl get svc proxy -n konflux-ui -o wide
+        echo ""
 
-        echo "Attempting to use port 9443 (as documented in Konflux setup)..."
+        SVC_TYPE=$(kubectl get svc proxy -n konflux-ui -o jsonpath='{.spec.type}')
+        SVC_CLUSTER_IP=$(kubectl get svc proxy -n konflux-ui -o jsonpath='{.spec.clusterIP}')
+        SVC_PORTS=$(kubectl get svc proxy -n konflux-ui -o jsonpath='{.spec.ports[*].port}')
+        SVC_TARGET_PORTS=$(kubectl get svc proxy -n konflux-ui -o jsonpath='{.spec.ports[*].targetPort}')
 
-        # Check if proxy service has port 443
-        SERVICE_PORT_443=$(kubectl get svc proxy -n konflux-ui -o jsonpath='{.spec.ports[?(@.port==443)].port}' 2>/dev/null || echo "")
-        SERVICE_PORT_80=$(kubectl get svc proxy -n konflux-ui -o jsonpath='{.spec.ports[?(@.port==80)].port}' 2>/dev/null || echo "")
+        echo "Service Type: ${SVC_TYPE}"
+        echo "Service ClusterIP: ${SVC_CLUSTER_IP}"
+        echo "Service Ports: ${SVC_PORTS}"
+        echo "Service TargetPorts: ${SVC_TARGET_PORTS}"
+        echo ""
 
-        if [[ -n "${SERVICE_PORT_443}" ]]; then
-          SERVICE_PORT=443
-          LOCAL_PORT=8080
-          echo "Found HTTPS service on port 443, forwarding to localhost:${LOCAL_PORT}"
-        elif [[ -n "${SERVICE_PORT_80}" ]]; then
-          SERVICE_PORT=80
-          LOCAL_PORT=8080
-          echo "Found HTTP service on port 80, forwarding to localhost:${LOCAL_PORT}"
-        else
-          # Fallback: get the first available port
-          SERVICE_PORT=$(kubectl get svc proxy -n konflux-ui -o jsonpath='{.spec.ports[0].port}')
-          LOCAL_PORT=8080
-          echo "Using first available port: ${SERVICE_PORT}, forwarding to localhost:${LOCAL_PORT}"
+        # Get deployment/pod information
+        echo "=== Deployment/Pod Information ==="
+        kubectl get deployment proxy -n konflux-ui -o wide
+        echo ""
+        kubectl get pods -n konflux-ui -l app.kubernetes.io/name=proxy -o wide 2>/dev/null || kubectl get pods -n konflux-ui -o wide
+        echo ""
+
+        # Get pod name
+        POD_NAME=$(kubectl get pod -n konflux-ui -l app.kubernetes.io/name=proxy -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+
+        if [[ -z "${POD_NAME}" ]]; then
+          # Try without label selector
+          POD_NAME=$(kubectl get pod -n konflux-ui -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
         fi
 
-        if [[ -z "${SERVICE_PORT}" ]]; then
-          echo "ERROR: Could not determine service port"
-          kubectl get svc proxy -n konflux-ui -o yaml
+        if [[ -z "${POD_NAME}" ]]; then
+          echo "ERROR: Could not find proxy pod"
+          kubectl get pods -n konflux-ui
           exit 1
         fi
 
-        # Start port forward in background
-        echo "Starting port forward from localhost:${LOCAL_PORT} to proxy:${SERVICE_PORT} in konflux-ui namespace..."
+        echo "Selected Pod: ${POD_NAME}"
+        POD_IP=$(kubectl get pod ${POD_NAME} -n konflux-ui -o jsonpath='{.status.podIP}')
+        echo "Pod IP: ${POD_IP}"
+        echo ""
+
+        # Get container port information
+        echo "=== Container Port Configuration ==="
+        echo "All containers and their ports:"
+        kubectl get pod ${POD_NAME} -n konflux-ui -o jsonpath='{range .spec.containers[*]}{.name}{"\n"}{.ports}{"\n\n"}{end}' | head -20
+        echo ""
+
+        # The proxy pod has multiple containers (nginx, oauth2-proxy)
+        # We need to forward to the SERVICE, not directly to a container port
+        # The service will route to the correct container
+
+        # Get service port and targetPort
+        echo "=== Determining Correct Port for Port-Forward ==="
+
+        # Get the first service port (usually the HTTP port)
+        SERVICE_PORT=$(kubectl get svc proxy -n konflux-ui -o jsonpath='{.spec.ports[0].port}')
+        SERVICE_TARGET_PORT=$(kubectl get svc proxy -n konflux-ui -o jsonpath='{.spec.ports[0].targetPort}')
+
+        echo "Service Port: ${SERVICE_PORT}"
+        echo "Service TargetPort: ${SERVICE_TARGET_PORT}"
+
+        # If targetPort is a named port, we need to resolve it to a number
+        # But for port-forward, we should use the service directly instead of pod
+
+        echo ""
+        echo "NOTE: This pod has multiple containers. Using SERVICE port-forward instead of POD port-forward."
+        echo ""
+
+        # Show all available access methods
+        echo "=== Available Access Methods ==="
+        echo "1. From within Kind cluster:"
+        echo "   - Service URL (HTTP): http://${SVC_CLUSTER_IP}:${SERVICE_PORT}"
+        echo "   - Service URL (HTTPS): https://${SVC_CLUSTER_IP}:9443"
+        echo "   - Pod Direct: http://${POD_IP} (multi-container pod)"
+        echo ""
+        echo "2. Via port-forward (what we're setting up):"
+        LOCAL_PORT=8080
+        echo "   - Will forward localhost:${LOCAL_PORT} -> service/proxy:${SERVICE_PORT}"
+        echo ""
+
+        # Start port forward to the SERVICE (not pod) to let service routing handle multi-container
+        echo "=== Starting Port Forward ==="
+        echo "Command: kubectl port-forward -n konflux-ui svc/proxy ${LOCAL_PORT}:${SERVICE_PORT}"
         kubectl port-forward -n konflux-ui svc/proxy ${LOCAL_PORT}:${SERVICE_PORT} &
         PORT_FORWARD_PID=$!
         echo "Port forward started with PID: ${PORT_FORWARD_PID}"
+        echo ""
 
         # Save PID for cleanup (store in a shared location)
         echo ${PORT_FORWARD_PID} > /tmp/port-forward-pid
@@ -162,8 +216,31 @@ spec:
         echo "Waiting for port forward to establish..."
         sleep 5
 
+        # First, test if the service is accessible from within the Kind cluster
+        echo "=== Testing Service Accessibility from Kind Cluster ==="
+        echo "Testing http://${SVC_CLUSTER_IP}:${SERVICE_PORT} ..."
+
+        SERVICE_TEST_RESULT=$(curl -s -o /dev/null -w "%{http_code}" http://${SVC_CLUSTER_IP}:${SERVICE_PORT} 2>/dev/null || echo "000")
+        echo "HTTP Response Code: ${SERVICE_TEST_RESULT}"
+
+        if [[ "${SERVICE_TEST_RESULT}" =~ ^(200|301|302|304|401|403|404)$ ]]; then
+          echo "✓ Service is accessible within Kind cluster!"
+        else
+          echo "✗ WARNING: Service may not be accessible within Kind cluster"
+          echo "This could indicate the service itself is not working correctly."
+          echo ""
+          echo "Checking pod status:"
+          kubectl get pods ${POD_NAME} -n konflux-ui -o wide
+          echo ""
+          echo "Checking container logs:"
+          kubectl logs ${POD_NAME} -n konflux-ui -c nginx --tail=20 2>/dev/null || echo "Could not get nginx logs"
+          kubectl logs ${POD_NAME} -n konflux-ui -c oauth2-proxy --tail=20 2>/dev/null || echo "Could not get oauth2-proxy logs"
+        fi
+        echo ""
+
         # Verify port forward with retry logic
-        echo "Verifying port forward to localhost:${LOCAL_PORT}..."
+        echo "=== Verifying Port Forward ==="
+        echo "Testing connection to localhost:${LOCAL_PORT}..."
         MAX_RETRIES=12
         RETRY_COUNT=0
         PORT_FORWARD_READY=false
@@ -172,41 +249,86 @@ spec:
           RETRY_COUNT=$((RETRY_COUNT + 1))
           echo "Attempt ${RETRY_COUNT}/${MAX_RETRIES}: Testing connection..."
 
-          # Try HTTPS if service port is 443
-          if [[ "${SERVICE_PORT}" == "443" ]]; then
-            HTTP_CODE=$(curl -k -s -o /dev/null -w "%{http_code}" https://localhost:${LOCAL_PORT} 2>/dev/null || echo "000")
-            if [[ "${HTTP_CODE}" =~ ^(200|301|302|304|401|403|404)$ ]]; then
-              echo "✓ Port forward is working! (HTTPS ${HTTP_CODE})"
-              PORT_FORWARD_READY=true
-              break
-            fi
+          # Try HTTPS
+          HTTPS_CODE=$(curl -k -s -o /dev/null -w "%{http_code}" https://localhost:${LOCAL_PORT} 2>/dev/null || echo "000")
+          if [[ "${HTTPS_CODE}" =~ ^(200|301|302|304|401|403|404)$ ]]; then
+            echo "✓ Port forward is working! (HTTPS ${HTTPS_CODE})"
+            echo "✓ Access URL: https://localhost:${LOCAL_PORT}"
+            PORT_FORWARD_READY=true
+            break
           fi
 
           # Try HTTP
           HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:${LOCAL_PORT} 2>/dev/null || echo "000")
           if [[ "${HTTP_CODE}" =~ ^(200|301|302|304|401|403|404)$ ]]; then
             echo "✓ Port forward is working! (HTTP ${HTTP_CODE})"
+            echo "✓ Access URL: http://localhost:${LOCAL_PORT}"
             PORT_FORWARD_READY=true
             break
           fi
 
-          echo "Not ready yet (HTTP code: ${HTTP_CODE}), waiting 5 seconds..."
+          echo "Not ready yet (HTTP: ${HTTP_CODE}, HTTPS: ${HTTPS_CODE}), waiting 5 seconds..."
           sleep 5
         done
 
-        if [[ "${PORT_FORWARD_READY}" == "false" ]]; then
-          echo "WARNING: Port forward verification failed after ${MAX_RETRIES} attempts"
+        echo ""
+        echo "=========================================="
+        echo "PORT FORWARD VERIFICATION RESULT"
+        echo "=========================================="
+
+        if [[ "${PORT_FORWARD_READY}" == "true" ]]; then
+          echo "✓ SUCCESS: Port forward is working!"
+          echo ""
+          echo "You can access Konflux UI at:"
+          echo "  - http://localhost:${LOCAL_PORT}"
+          echo "  - https://localhost:${LOCAL_PORT} (if HTTPS is configured)"
+          echo ""
+        else
+          echo "✗ FAILED: Port forward verification failed after ${MAX_RETRIES} attempts"
+          echo ""
+          echo "Debugging information:"
+          echo ""
           echo "Port forward process status:"
           ps aux | grep "[p]ort-forward" || echo "Port forward process not found"
           echo ""
           echo "Checking if port ${LOCAL_PORT} is listening:"
-          netstat -tuln | grep ":${LOCAL_PORT}" || ss -tuln | grep ":${LOCAL_PORT}" || echo "Port ${LOCAL_PORT} not listening"
+          netstat -tuln 2>/dev/null | grep ":${LOCAL_PORT}" || ss -tuln 2>/dev/null | grep ":${LOCAL_PORT}" || echo "Port ${LOCAL_PORT} not listening"
           echo ""
-          echo "Testing connection with verbose output:"
+          echo "Testing connection with verbose curl:"
           timeout 5 curl -v http://localhost:${LOCAL_PORT} 2>&1 | head -30 || true
           echo ""
-          echo "Continuing anyway - Cypress will handle connection retries..."
+          echo "Checking pod logs:"
+          kubectl logs ${POD_NAME} -n konflux-ui --tail=50 || true
+          echo ""
+          echo "ERROR: Cannot proceed with E2E tests - Konflux UI is not accessible"
+          exit 1
         fi
+
+        echo ""
+        echo "=========================================="
+        echo "MANUAL TESTING PAUSE - 30 MINUTES"
+        echo "=========================================="
+        echo ""
+        echo "Pausing for 30 minutes to allow manual testing..."
+        echo "During this time, you can:"
+        echo "  1. Access Konflux UI at: http://localhost:${LOCAL_PORT}"
+        echo "  2. Run Cypress tests locally with: CYPRESS_BASE_URL=http://localhost:${LOCAL_PORT}"
+        echo "  3. Check the Kind cluster with kubectl commands"
+        echo ""
+        echo "Port forward will remain active during this pause."
+        echo "Started at: $(date)"
+        echo "Will resume at: $(date -d '+30 minutes' 2>/dev/null || date -v+30M 2>/dev/null || echo 'in 30 minutes')"
+        echo ""
+
+        # Sleep for 30 minutes (1800 seconds)
+        for i in {1..30}; do
+          echo "Minute ${i}/30 elapsed..."
+          sleep 60
+        done
+
+        echo ""
+        echo "Manual testing pause completed. Continuing with automated E2E tests..."
+        echo ""
     - name: run-e2e-test
       image: quay.io/konflux_ui_qe/konflux-ui-tests:latest
       workingDir: /tmp/e2e
