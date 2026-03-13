@@ -465,10 +465,10 @@ aws4@^1.8.0:
   resolved "https://registry.yarnpkg.com/aws4/-/aws4-1.13.2.tgz#0aa167216965ac9474ccfa83892cfb6b3e1e52ef"
   integrity sha512-lHe62zvbTB5eEABUVi/AwVh0ZKY9rMMDhmm+eeyuuUQbQ3+J+fONVQOZyj+DdrvD4BY33uYniyRJ4UJIaSKAfw==
 
-axe-core@^4.4.2:
-  version "4.11.0"
-  resolved "https://registry.yarnpkg.com/axe-core/-/axe-core-4.11.0.tgz#16f74d6482e343ff263d4f4503829e9ee91a86b6"
-  integrity sha512-ilYanEU8vxxBexpJd8cWM4ElSQq4QctCLKih0TSfjIfCQTeyH/6zVrmIJfLPrKTKJRbiG+cfnZbQIjAlJmF1jQ==
+axe-core@^4.10.2:
+  version "4.11.1"
+  resolved "https://registry.yarnpkg.com/axe-core/-/axe-core-4.11.1.tgz#052ff9b2cbf543f5595028b583e4763b40c78ea7"
+  integrity sha512-BASOg+YwO2C+346x3LZOeoovTIoTrRqEsqMa6fmfAV0P+U9mFr9NsyOEpiYvFjbc64NMrSswhV50WdXzdb/Z5A==
 
 balanced-match@^1.0.0:
   version "1.0.2"
@@ -943,7 +943,7 @@ decamelize@^1.2.0:
   resolved "https://registry.yarnpkg.com/decamelize/-/decamelize-1.2.0.tgz#f6534d15148269b20352e7bee26f501f9a191290"
   integrity sha512-z2S+W9X73hAUUki+N+9Za2lBlun89zigOyGrsax+KUQ6wKW4ZoWpEYBkGhQjwAjjDCkWxhY0VKEhk8wzY7F5cA==
 
-deepmerge@^4.2.2:
+deepmerge@^4.3.1:
   version "4.3.1"
   resolved "https://registry.yarnpkg.com/deepmerge/-/deepmerge-4.3.1.tgz#44b5f2147cd3b00d4b56137685966f26fd25dd4a"
   integrity sha512-3sUqbMEc77XqpdNO7FRyRog+eW3ph+GYCbj+rK+uYyRMuwsVy0rMiVtPn+QJlKFvWP/1PYpapqYn0Me2knFn+A==
@@ -1153,12 +1153,12 @@ eslint-config-prettier@^9.1.0:
   resolved "https://registry.yarnpkg.com/eslint-config-prettier/-/eslint-config-prettier-9.1.2.tgz#90deb4fa0259592df774b600dbd1d2249a78ce91"
   integrity sha512-iI1f+D2ViGn+uvv5HuHVUamg8ll4tN+JRHGc6IJi4TP9Kl976C57fzPXgseXNs8v0iA8aSJpHsTWjDb9QJamGQ==
 
-eslint-plugin-cypress@^4.1.0:
-  version "4.3.0"
-  resolved "https://registry.yarnpkg.com/eslint-plugin-cypress/-/eslint-plugin-cypress-4.3.0.tgz#fce3c67c836541cb652c653f5e33088c8926a988"
-  integrity sha512-CgS/S940MJlT8jtnWGKI0LvZQBGb/BB0QCpgBOxFMM/Z6znD+PZUwBhCTwHKN2GEr5AOny3xB92an0QfzBGooQ==
+eslint-plugin-cypress@^6.0.0:
+  version "6.2.0"
+  resolved "https://registry.yarnpkg.com/eslint-plugin-cypress/-/eslint-plugin-cypress-6.2.0.tgz#220992444debed13587a1fb3356e7e952245ac43"
+  integrity sha512-G/8XT9Si0GaqGRVM0sgnRACCI9mbzsC4CisvaaiuJlQoCseKz6C51kq5fcC/yKmwO4dTsWCdhbgaiQtZFGSONg==
   dependencies:
-    globals "^15.15.0"
+    globals "^17.3.0"
 
 esprima@^4.0.0:
   version "4.0.1"
@@ -1436,10 +1436,10 @@ global-dirs@^3.0.0:
   dependencies:
     ini "2.0.0"
 
-globals@^15.15.0:
-  version "15.15.0"
-  resolved "https://registry.yarnpkg.com/globals/-/globals-15.15.0.tgz#7c4761299d41c32b075715a4ce1ede7897ff72a8"
-  integrity sha512-7ACyT3wmyp3I61S4fG682L0VA2RGD9otkqGJIwNUMF1SWUombIIk+af1unuDYgMm082aHYwD+mzJvv9Iu8dsgg==
+globals@^17.3.0:
+  version "17.4.0"
+  resolved "https://registry.yarnpkg.com/globals/-/globals-17.4.0.tgz#33d7d297ed1536b388a0e2f4bcd0ff19c8ff91b5"
+  integrity sha512-hjrNztw/VajQwOLsMNT1cbJiH2muO3OROCHnbehc8eY5JyD2gqz4AcMHPqgaOR59DjgUjYAYLeH699g/eWi2jw==
 
 globalthis@^1.0.4:
   version "1.0.4"
@@ -2116,7 +2116,7 @@ mkdirp@^3.0.0:
   resolved "https://registry.yarnpkg.com/mkdirp/-/mkdirp-3.0.1.tgz#e44e4c5607fb279c168241713cc6e0fea9adcb50"
   integrity sha512-+NsyUUAZDmo6YVHzL/stxSu3t9YS1iljliy3BSDrXJ/dkn1KYdmtZODGGjLcc9XLgVVpH4KshHB8XmZgMhaBXg==
 
-mocha-junit-reporter@^2.0.2:
+mocha-junit-reporter@^2.2.1:
   version "2.2.1"
   resolved "https://registry.yarnpkg.com/mocha-junit-reporter/-/mocha-junit-reporter-2.2.1.tgz#739f5595d0f051d07af9d74e32c416e13a41cde5"
   integrity sha512-iDn2tlKHn8Vh8o4nCzcUVW4q7iXp7cC4EB78N0cDHIobLymyHNwe0XG8HEHHjc3hJlXm0Vy6zcrxaIhnI2fWmw==
