@@ -90,13 +90,29 @@ spec:
 
         echo "✓ Deployment is ready"
 
-        # Get service info
+        # Get service and pod info
         kubectl get svc proxy -n konflux-ui -o wide
-
-        # Start port forward
         echo ""
-        echo "Starting port-forward: localhost:8080 -> svc/proxy:8888"
-        kubectl port-forward -n konflux-ui svc/proxy 8080:8888
+
+        # Get pod name
+        POD_NAME=$(kubectl get pod -n konflux-ui -l app=proxy -o jsonpath='{.items[0].metadata.name}')
+        if [[ -z "${POD_NAME}" ]]; then
+          echo "ERROR: Could not find proxy pod"
+          kubectl get pods -n konflux-ui
+          exit 1
+        fi
+
+        echo "Found pod: ${POD_NAME}"
+
+        # Get nginx container port (web port)
+        NGINX_PORT=$(kubectl get pod ${POD_NAME} -n konflux-ui -o jsonpath='{.spec.containers[?(@.name=="nginx")].ports[?(@.name=="web")].containerPort}')
+        echo "Nginx web port: ${NGINX_PORT}"
+
+        # Start port forward to nginx container's port 8080
+        # This is the HTTP port that nginx listens on
+        echo ""
+        echo "Starting port-forward: localhost:8080 -> pod/${POD_NAME}:${NGINX_PORT}"
+        kubectl port-forward -n konflux-ui pod/${POD_NAME} 8080:${NGINX_PORT}
   steps:
     - name: run-e2e-test
       image: quay.io/konflux_ui_qe/konflux-ui-tests:latest
