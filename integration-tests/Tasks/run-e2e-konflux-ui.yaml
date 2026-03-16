@@ -62,21 +62,94 @@ spec:
         #!/usr/bin/env bash
         set -euo pipefail
 
+        echo "=========================================="
+        echo "PORT FORWARD SIDECAR - DEBUG INFO"
+        echo "=========================================="
+        echo ""
+        echo "Environment:"
+        echo "  JOB_TYPE: ${JOB_TYPE}"
+        echo "  Task parameter cluster-access-secret: $(params.cluster-access-secret)"
+        echo ""
+
+        echo "=== Checking /credentials directory ==="
+        if [[ -d /credentials ]]; then
+          echo "Directory exists. Contents:"
+          ls -laR /credentials/ || echo "Cannot list /credentials"
+        else
+          echo "ERROR: /credentials directory does not exist!"
+        fi
+        echo ""
+
+        echo "=== Checking kubeconfig file ==="
+        if [[ -f /credentials/kubeconfig ]]; then
+          echo "✓ Found /credentials/kubeconfig"
+          ls -lh /credentials/kubeconfig
+          echo "File size: $(wc -c < /credentials/kubeconfig) bytes"
+          echo "First 5 lines:"
+          head -5 /credentials/kubeconfig || echo "Cannot read file"
+        else
+          echo "✗ /credentials/kubeconfig NOT FOUND"
+          echo ""
+          echo "=== Troubleshooting Info ==="
+          echo "Listing all files in /credentials:"
+          find /credentials -type f 2>/dev/null || echo "No files found"
+          echo ""
+          echo "Checking if kubectl is available:"
+          which kubectl || echo "kubectl not found in PATH"
+          echo ""
+          echo "Attempting to list secrets in current namespace (if possible):"
+          # Try to use default service account token
+          if [[ -f /var/run/secrets/kubernetes.io/serviceaccount/token ]]; then
+            echo "Found service account token, trying to list secrets..."
+            NAMESPACE=$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)
+            echo "Current namespace: ${NAMESPACE}"
+            TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+            CA_CERT=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+
+            echo ""
+            echo "Secrets starting with 'kfg-' in namespace ${NAMESPACE}:"
+            curl -s --cacert ${CA_CERT} -H "Authorization: Bearer ${TOKEN}" \
+              "https://kubernetes.default.svc/api/v1/namespaces/${NAMESPACE}/secrets" \
+              | grep -o '"name":"kfg-[^"]*"' | cut -d'"' -f4 || echo "Failed to list secrets"
+          else
+            echo "No service account token available"
+          fi
+        fi
+        echo ""
+
         # Skip port forwarding for periodic-stage jobs
         if [[ "${JOB_TYPE}" == "periodic-stage" ]]; then
-          echo "Skipping port forward for periodic-stage job"
+          echo "INFO: Skipping port forward for periodic-stage job"
           sleep infinity
           exit 0
         fi
 
         # Check if kubeconfig exists
         if [[ ! -f /credentials/kubeconfig ]]; then
-          echo "WARNING: kubeconfig not found, skipping port forward"
+          echo "=========================================="
+          echo "ERROR: Cannot proceed without kubeconfig"
+          echo "=========================================="
+          echo ""
+          echo "The kubeconfig file is missing. This means:"
+          echo ""
+          echo "1. The secret specified in 'cluster-access-secret' parameter doesn't exist, OR"
+          echo "2. The secret exists but doesn't have a 'kubeconfig' key, OR"
+          echo "3. The volume mount failed"
+          echo ""
+          echo "Expected secret name: $(params.cluster-access-secret)"
+          echo ""
+          echo "Next steps:"
+          echo "  1. Check IntegrationTestScenario has 'cluster-kubeconfig-secret' parameter set"
+          echo "  2. Run: oc get secret <secret-name> -n <namespace>"
+          echo "  3. Verify secret has 'kubeconfig' key: oc get secret <secret-name> -o jsonpath='{.data.kubeconfig}'"
+          echo ""
           sleep infinity
-          exit 0
+          exit 1
         fi
 
         export KUBECONFIG=/credentials/kubeconfig
+        echo "✓ KUBECONFIG set to: ${KUBECONFIG}"
+        echo ""
 
         echo "=== Port Forward Sidecar Starting ==="
         echo "Waiting for Konflux UI deployment to be ready..."
@@ -103,16 +176,60 @@ spec:
         fi
 
         echo "Found pod: ${POD_NAME}"
-
-        # Get nginx container port (web port)
-        NGINX_PORT=$(kubectl get pod ${POD_NAME} -n konflux-ui -o jsonpath='{.spec.containers[?(@.name=="nginx")].ports[?(@.name=="web")].containerPort}')
-        echo "Nginx web port: ${NGINX_PORT}"
-
-        # Start port forward to nginx container's port 8080
-        # This is the HTTP port that nginx listens on
         echo ""
-        echo "Starting port-forward: localhost:8080 -> pod/${POD_NAME}:${NGINX_PORT}"
-        kubectl port-forward -n konflux-ui pod/${POD_NAME} 8080:${NGINX_PORT}
+
+        # Get detailed pod information
+        echo "=== Pod Details ==="
+        kubectl get pod ${POD_NAME} -n konflux-ui -o wide
+        echo ""
+
+        echo "=== Container Ports Configuration ==="
+        kubectl get pod ${POD_NAME} -n konflux-ui -o jsonpath='{range .spec.containers[*]}Container: {.name}{"\n"}{range .ports[*]}  - {.name}: {.containerPort}/{.protocol}{"\n"}{end}{"\n"}{end}'
+        echo ""
+
+        # Get nginx container ports
+        NGINX_HTTP_PORT=$(kubectl get pod ${POD_NAME} -n konflux-ui -o jsonpath='{.spec.containers[?(@.name=="nginx")].ports[?(@.name=="web")].containerPort}')
+        NGINX_HTTPS_PORT=$(kubectl get pod ${POD_NAME} -n konflux-ui -o jsonpath='{.spec.containers[?(@.name=="nginx")].ports[?(@.name=="web-tls")].containerPort}')
+
+        echo "Nginx HTTP port (web): ${NGINX_HTTP_PORT}"
+        echo "Nginx HTTPS port (web-tls): ${NGINX_HTTPS_PORT}"
+        echo ""
+
+        # Check what's actually listening inside the pod
+        echo "=== Checking Listening Ports in Pod ==="
+        echo "Running 'ss -tln' in nginx container:"
+        kubectl exec ${POD_NAME} -n konflux-ui -c nginx -- ss -tln 2>/dev/null | grep LISTEN || echo "Could not run ss"
+        echo ""
+
+        echo "Running 'ss -tln' in oauth2-proxy container:"
+        kubectl exec ${POD_NAME} -n konflux-ui -c oauth2-proxy -- ss -tln 2>/dev/null | grep LISTEN || echo "Could not run ss"
+        echo ""
+
+        # Test connectivity from within the cluster
+        echo "=== Testing Pod Connectivity from Cluster ==="
+        POD_IP=$(kubectl get pod ${POD_NAME} -n konflux-ui -o jsonpath='{.status.podIP}')
+        echo "Pod IP: ${POD_IP}"
+
+        echo "Testing HTTP to pod IP:${NGINX_HTTP_PORT}..."
+        HTTP_TEST=$(timeout 5 kubectl exec ${POD_NAME} -n konflux-ui -c nginx -- curl -s -o /dev/null -w "%{http_code}" http://localhost:${NGINX_HTTP_PORT} 2>&1 || echo "failed")
+        echo "  Result: ${HTTP_TEST}"
+
+        echo "Testing HTTPS to pod IP:${NGINX_HTTPS_PORT}..."
+        HTTPS_TEST=$(timeout 5 kubectl exec ${POD_NAME} -n konflux-ui -c nginx -- curl -k -s -o /dev/null -w "%{http_code}" https://localhost:${NGINX_HTTPS_PORT} 2>&1 || echo "failed")
+        echo "  Result: ${HTTPS_TEST}"
+        echo ""
+
+        # Start port forward to nginx container's HTTPS port (9443)
+        # We use HTTPS because nginx definitely listens on 9443
+        echo "=========================================="
+        echo "STARTING PORT FORWARD"
+        echo "=========================================="
+        echo "Command: kubectl port-forward -n konflux-ui pod/${POD_NAME} 8080:${NGINX_HTTPS_PORT}"
+        echo "This will forward:"
+        echo "  localhost:8080 (in this sidecar) -> pod ${POD_NAME}:${NGINX_HTTPS_PORT} (nginx HTTPS)"
+        echo ""
+        echo "Port forward starting..."
+        kubectl port-forward -n konflux-ui pod/${POD_NAME} 8080:${NGINX_HTTPS_PORT}
   steps:
     - name: run-e2e-test
       image: quay.io/konflux_ui_qe/konflux-ui-tests:latest
