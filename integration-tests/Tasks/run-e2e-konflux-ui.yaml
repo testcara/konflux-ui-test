@@ -49,12 +49,16 @@ spec:
       secret:
         secretName: $(params.cluster-access-secret)
         optional: true
+    - name: shared-data
+      emptyDir: {}
   sidecars:
     - name: port-forward
       image: quay.io/konflux-ci/appstudio-utils:ab6b0b8e40e440158e7288c73aff1cf83a2cc8a9@sha256:24179f0efd06c65d16868c2d7eb82573cce8e43533de6cea14fec3b7446e0b14
       volumeMounts:
         - name: kubeconfig
           mountPath: /credentials
+        - name: shared-data
+          mountPath: /shared
       env:
         - name: JOB_TYPE
           value: $(params.job-type)
@@ -120,6 +124,7 @@ spec:
         # Skip port forwarding for periodic-stage jobs
         if [[ "${JOB_TYPE}" == "periodic-stage" ]]; then
           echo "INFO: Skipping port forward for periodic-stage job"
+          echo "skipped" > /shared/port-forward-status
           sleep infinity
           exit 0
         fi
@@ -228,12 +233,51 @@ spec:
         echo "This will forward:"
         echo "  localhost:8080 (in this sidecar) -> pod ${POD_NAME}:${NGINX_HTTPS_PORT} (nginx HTTPS)"
         echo ""
-        echo "Port forward starting..."
-        kubectl port-forward -n konflux-ui pod/${POD_NAME} 8080:${NGINX_HTTPS_PORT}
+        echo "Port forward starting in background..."
+
+        # Start port-forward in background
+        kubectl port-forward -n konflux-ui pod/${POD_NAME} 8080:${NGINX_HTTPS_PORT} &
+        PF_PID=$!
+
+        echo "Port-forward process started with PID: ${PF_PID}"
+
+        # Wait for port-forward to be ready
+        echo "Waiting for port-forward to be ready..."
+        MAX_WAIT=30
+        ELAPSED=0
+        while [[ ${ELAPSED} -lt ${MAX_WAIT} ]]; do
+          # Use HTTPS with -k to ignore cert, since we're forwarding to port 9443 (HTTPS)
+          HTTP_CODE=$(curl -k -s -o /dev/null -w "%{http_code}" https://localhost:8080 2>/dev/null || echo "000")
+          echo "  Attempt $((ELAPSED + 1)): HTTP code = ${HTTP_CODE}"
+          if echo "${HTTP_CODE}" | grep -qE "^(200|301|302|304|401|403|404)$"; then
+            echo "✓ Port-forward is ready!"
+            break
+          fi
+          sleep 1
+          ELAPSED=$((ELAPSED + 1))
+        done
+
+        if [[ ${ELAPSED} -ge ${MAX_WAIT} ]]; then
+          echo "ERROR: Port-forward not ready after ${MAX_WAIT}s"
+          echo "Last HTTP code: ${HTTP_CODE}"
+          echo "failed" > /shared/port-forward-status
+          exit 1
+        fi
+
+        # Signal that port-forward is ready
+        echo "ready" > /shared/port-forward-status
+        echo "✓ Readiness marker created at /shared/port-forward-status"
+
+        # Keep sidecar alive by waiting for the port-forward process
+        echo "Port-forward is running. Waiting for process to complete..."
+        wait $PF_PID
   steps:
     - name: run-e2e-test
       image: quay.io/konflux_ui_qe/konflux-ui-tests:latest
       workingDir: /tmp/e2e
+      volumeMounts:
+        - name: shared-data
+          mountPath: /shared
       env:
         - name: JOB_SPEC
           value: $(params.job-spec)
@@ -280,27 +324,39 @@ spec:
         else
           echo "Running against local Kind cluster..."
 
-          # Wait for port-forward sidecar to be ready
-          echo "Waiting for port-forward sidecar..."
+          # Wait for port-forward sidecar to be ready using shared marker file
+          echo "Waiting for port-forward sidecar readiness marker..."
           MAX_WAIT=60
           ELAPSED=0
 
           while [[ ${ELAPSED} -lt ${MAX_WAIT} ]]; do
-            if curl -s -o /dev/null -w "%{http_code}" http://localhost:8080 2>/dev/null | grep -qE "^(200|301|302|304|401|403|404)$"; then
-              echo "✓ Port-forward is ready!"
-              break
+            if [[ -f /shared/port-forward-status ]]; then
+              STATUS=$(cat /shared/port-forward-status)
+              if [[ "${STATUS}" == "ready" ]]; then
+                echo "✓ Port-forward sidecar is ready!"
+                break
+              elif [[ "${STATUS}" == "failed" ]]; then
+                echo "ERROR: Port-forward sidecar failed to start"
+                exit 1
+              elif [[ "${STATUS}" == "skipped" ]]; then
+                echo "ERROR: Port-forward was skipped but required for local cluster"
+                exit 1
+              fi
             fi
-            echo "Waiting for port-forward (${ELAPSED}s/${MAX_WAIT}s)..."
-            sleep 3
-            ELAPSED=$((ELAPSED + 3))
+            echo "Waiting for port-forward readiness (${ELAPSED}s/${MAX_WAIT}s)..."
+            sleep 2
+            ELAPSED=$((ELAPSED + 2))
           done
 
           if [[ ${ELAPSED} -ge ${MAX_WAIT} ]]; then
             echo "ERROR: Port-forward not ready after ${MAX_WAIT}s"
+            echo "Status file contents:"
+            cat /shared/port-forward-status 2>/dev/null || echo "Status file not found"
             exit 1
           fi
 
-          export CYPRESS_BASE_URL="http://localhost:8080"
+          # Port-forward maps localhost:8080 to nginx HTTPS port (9443)
+          export CYPRESS_BASE_URL="https://localhost:8080"
         fi
 
         # Run tests
