@@ -448,24 +448,59 @@ spec:
             export KUBECONFIG=/credentials/kubeconfig
             echo "Using kubeconfig from /credentials/kubeconfig"
 
-            # Read Service URL from task results (saved by setup-port-forward step)
-            SERVICE_URL=$(cat $(results.service-url.path) 2>/dev/null || echo "")
-
-            if [[ -n "${SERVICE_URL}" ]]; then
-              echo "Using Kind cluster Service URL: ${SERVICE_URL}"
-              export CYPRESS_BASE_URL="${SERVICE_URL}"
-
-              # Verify kubeconfig works
-              echo "Verifying access to Kind cluster..."
-              if kubectl get svc proxy -n konflux-ui >/dev/null 2>&1; then
-                echo "✓ Successfully connected to Kind cluster"
-                kubectl get svc proxy -n konflux-ui -o wide
-              else
-                echo "WARNING: Cannot access Kind cluster Service"
-              fi
+            # Verify kubeconfig works
+            echo "Verifying access to Kind cluster..."
+            if kubectl get svc proxy -n konflux-ui >/dev/null 2>&1; then
+              echo "✓ Successfully connected to Kind cluster"
+              kubectl get svc proxy -n konflux-ui -o wide
             else
-              echo "WARNING: No Service URL found in task results, using default localhost:8080"
-              export CYPRESS_BASE_URL="https://localhost:8080"
+              echo "ERROR: Cannot access Kind cluster Service"
+              exit 1
+            fi
+
+            # Set up port-forward from this container to Kind cluster
+            echo ""
+            echo "=== Setting up port-forward to Kind cluster ==="
+
+            # Get Service port
+            SERVICE_PORT=$(kubectl get svc proxy -n konflux-ui -o jsonpath='{.spec.ports[0].port}')
+            LOCAL_PORT=8080
+
+            echo "Starting port-forward: localhost:${LOCAL_PORT} -> svc/proxy:${SERVICE_PORT}"
+            kubectl port-forward -n konflux-ui svc/proxy ${LOCAL_PORT}:${SERVICE_PORT} &
+            PORT_FORWARD_PID=$!
+            echo "Port forward PID: ${PORT_FORWARD_PID}"
+
+            # Wait for port-forward to be ready
+            echo "Waiting for port-forward to establish..."
+            sleep 5
+
+            # Test port-forward
+            MAX_RETRIES=6
+            RETRY_COUNT=0
+            PORT_FORWARD_READY=false
+
+            while [[ ${RETRY_COUNT} -lt ${MAX_RETRIES} ]]; do
+              RETRY_COUNT=$((RETRY_COUNT + 1))
+              echo "Testing connection (attempt ${RETRY_COUNT}/${MAX_RETRIES})..."
+
+              HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:${LOCAL_PORT} 2>/dev/null || echo "000")
+              if [[ "${HTTP_CODE}" =~ ^(200|301|302|304|401|403|404)$ ]]; then
+                echo "✓ Port forward is working! (HTTP ${HTTP_CODE})"
+                PORT_FORWARD_READY=true
+                break
+              fi
+
+              echo "Not ready yet (HTTP: ${HTTP_CODE}), waiting 3 seconds..."
+              sleep 3
+            done
+
+            if [[ "${PORT_FORWARD_READY}" == "true" ]]; then
+              echo "✓ SUCCESS: Port forward to Kind cluster is ready"
+              export CYPRESS_BASE_URL="http://localhost:${LOCAL_PORT}"
+            else
+              echo "✗ ERROR: Port forward failed after ${MAX_RETRIES} attempts"
+              exit 1
             fi
           else
             echo "WARNING: kubeconfig not found, using default localhost:8080"
