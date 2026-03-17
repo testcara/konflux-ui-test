@@ -20,6 +20,8 @@ spec:
       value: github-credentials
     - name: cypress-credentials-secret
       value: cypress-credentials
+    - name: cypress-cloud-secret
+      value: cypress-cloud-credentials
     - name: slack-credentials-secret
       value: slack-credentials
   resolverRef:

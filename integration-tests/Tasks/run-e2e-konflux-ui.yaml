@@ -41,6 +41,10 @@ spec:
       description: 'Secret name containing kubeconfig for accessing Kind cluster'
       type: string
       default: ""
+    - name: cypress-cloud-secret
+      description: 'Secret name containing Cypress Cloud credentials (project-id, record-key)'
+      type: string
+      default: "cypress-cloud-credentials"
   results:
     - name: e2e-output
       description: 'Result of e2e test'
@@ -50,6 +54,8 @@ spec:
         secretName: $(params.cluster-access-secret)
         optional: true
     - name: shared-data
+      emptyDir: {}
+    - name: test-artifacts
       emptyDir: {}
   sidecars:
     - name: port-forward
@@ -297,11 +303,23 @@ spec:
             secretKeyRef:
               name: $(params.cypress-credentials-secret)
               key: password
-        - name: GH_TOKEN
+        - name: CYPRESS_GH_TOKEN
           valueFrom:
             secretKeyRef:
               name: $(params.github-credentials-secret)
               key: token
+        - name: CYPRESS_PROJECT_ID
+          valueFrom:
+            secretKeyRef:
+              name: $(params.cypress-cloud-secret)
+              key: project-id
+              optional: true
+        - name: CYPRESS_RECORD_KEY
+          valueFrom:
+            secretKeyRef:
+              name: $(params.cypress-cloud-secret)
+              key: record-key
+              optional: true
       script: |
         #!/usr/bin/env bash
         set -euo pipefail
@@ -309,12 +327,12 @@ spec:
         echo "=== Running Cypress E2E Tests ==="
         echo "Job Type: ${JOB_TYPE}"
 
-        # Verify GH_TOKEN
-        if [[ -z "${GH_TOKEN:-}" ]]; then
-          echo "ERROR: GH_TOKEN is not set!"
+        # Verify CYPRESS_GH_TOKEN
+        if [[ -z "${CYPRESS_GH_TOKEN:-}" ]]; then
+          echo "ERROR: CYPRESS_GH_TOKEN is not set!"
           exit 1
         fi
-        echo "✓ GH_TOKEN is set (length: ${#GH_TOKEN})"
+        echo "✓ CYPRESS_GH_TOKEN is set (length: ${#CYPRESS_GH_TOKEN})"
 
         # Configure based on job type
         if [[ ${JOB_TYPE} == 'periodic-stage' ]]; then
@@ -356,17 +374,31 @@ spec:
           fi
 
           # Port-forward maps localhost:8080 to nginx HTTPS port (9443)
-          export CYPRESS_BASE_URL="https://localhost:8080"
+          export CYPRESS_KONFLUX_BASE_URL="https://localhost:8080"
         fi
 
         # Run tests
         SPEC_FILE="tests/basic-happy-path.spec.ts"
         echo ""
         echo "Running: ${SPEC_FILE}"
-        echo "CYPRESS_BASE_URL: ${CYPRESS_BASE_URL:-not set}"
+        echo "CYPRESS_KONFLUX_BASE_URL: ${CYPRESS_KONFLUX_BASE_URL:-not set}"
+        echo "CYPRESS_LOCAL_CLUSTER: ${CYPRESS_LOCAL_CLUSTER}"
+        echo "CYPRESS_PERIODIC_RUN_STAGE: ${CYPRESS_PERIODIC_RUN_STAGE}"
         echo ""
 
-        npx cypress run -b chrome --spec "${SPEC_FILE}" --env "GH_TOKEN=${GH_TOKEN}" || EXIT_CODE=$?
+        # Build Cypress command with optional recording
+        CYPRESS_ARGS="--runner-ui -b chrome --spec ${SPEC_FILE}"
+
+        if [[ -n "${CYPRESS_PROJECT_ID:-}" && -n "${CYPRESS_RECORD_KEY:-}" ]]; then
+          echo "✓ Cypress Cloud recording enabled"
+          echo "  Project ID: ${CYPRESS_PROJECT_ID}"
+          CYPRESS_ARGS="${CYPRESS_ARGS} --record --tag ${JOB_TYPE}"
+        else
+          echo "ℹ Cypress Cloud recording disabled (PROJECT_ID or RECORD_KEY not set)"
+        fi
+
+        echo "Running: npx cypress run ${CYPRESS_ARGS}"
+        npx cypress run ${CYPRESS_ARGS} || EXIT_CODE=$?
 
         EXIT_CODE=${EXIT_CODE:-0}
         echo ${EXIT_CODE} > /tmp/e2e-exit-code

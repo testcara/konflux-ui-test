@@ -28,6 +28,10 @@ spec:
       description: 'Secret name containing Cypress credentials'
       default: 'cypress-credentials'
       type: string
+    - name: cypress-cloud-secret
+      description: 'Secret name containing Cypress Cloud credentials'
+      default: 'cypress-cloud-credentials'
+      type: string
     - name: slack-credentials-secret
       description: 'Secret name containing Slack credentials'
       default: 'slack-credentials'
@@ -209,6 +213,8 @@ spec:
           value: 'main'
         - name: cypress-credentials-secret
           value: $(params.cypress-credentials-secret)
+        - name: cypress-cloud-secret
+          value: $(params.cypress-cloud-secret)
         - name: slack-credentials-secret
           value: $(params.slack-credentials-secret)
         - name: github-credentials-secret
