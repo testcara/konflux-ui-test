@@ -107,7 +107,7 @@ export default defineConfig({
 
       const defaultValues: { [key: string]: string | boolean } = {
         KONFLUX_BASE_URL: 'https://localhost:8080',
-        USERNAME: 'user2@konflux.dev',
+        USERNAME: 'user1@konflux.dev',
         PASSWORD: 'password',
         GH_USERNAME: 'hac-test',
         GH_REPO_OWNER: 'redhat-hac-qe',

@@ -28,6 +28,8 @@ spec:
       value: '10'
     - name: cloud-credential-key
       value: rhtap-cloud-credentials-us-east-1
+    - name: build-credentials-secret # needed for deploy 0.3
+      value: build-credentials
   resolverRef:
     params:
       - name: url
