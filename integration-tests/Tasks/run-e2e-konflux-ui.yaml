@@ -1,4 +1,3 @@
----
 apiVersion: tekton.dev/v1beta1
 kind: Task
 metadata:
@@ -9,266 +8,53 @@ metadata:
     tekton.dev/tags: 'e2e,cypress,konflux-ui'
 spec:
   description: >-
-    Runs E2E tests for Konflux UI using Cypress
+    A clean, native Tekton Task to run Konflux UI E2E tests. 
+    No Podman, no sidecars, no OCI overhead.
   params:
-    - name: job-spec
-      description: 'Job specification metadata'
-      type: string
     - name: job-type
-      description: 'Type of job (e.g., periodic-stage, periodic, pr)'
       type: string
-      default: "pr-check"
-    - name: git-url
-      description: 'Git repository URL'
-      type: string
-    - name: git-revision
-      description: 'Git revision to checkout'
-      type: string
-      default: "main"
-    - name: cypress-credentials-secret
-      description: 'Secret name containing Cypress credentials (username, password)'
-      type: string
-      default: "cypress-credentials"
-    - name: slack-credentials-secret
-      description: 'Secret name containing Slack credentials'
-      type: string
-      default: "slack-credentials"
-    - name: github-credentials-secret
-      description: 'Secret name containing GitHub token'
-      type: string
-      default: "github-credentials"
+      default: 'pr-check'
     - name: cluster-access-secret
-      description: 'Secret name containing kubeconfig for accessing Kind cluster'
       type: string
-      default: ""
-    - name: cypress-cloud-secret
-      description: 'Secret name containing Cypress Cloud credentials (project-id, record-key)'
+      description: 'Secret name containing kubeconfig for the Kind cluster'
+      default: ''
+    - name: cypress-credentials-secret
       type: string
-      default: "cypress-cloud-credentials"
-    - name: debug-pause-minutes
-      description: 'Minutes to pause after test for artifact inspection (0 to skip, max 60)'
+      default: 'cypress-credentials'
+    - name: github-credentials-secret
       type: string
-      default: "0"
-    - name: oci-storage
-      description: 'OCI repository to store test artifacts (e.g., quay.io/user/repo:tag)'
+      default: 'github-credentials'
+    - name: spec-file
       type: string
-      default: ""
-    - name: oci-credentials-secret
-      description: 'Secret containing OCI registry credentials'
-      type: string
-      default: "quay-secret"
-  results:
-    - name: e2e-output
-      description: 'Result of e2e test'
+      default: 'tests/basic-happy-path.spec.ts'
   volumes:
     - name: kubeconfig
       secret:
         secretName: $(params.cluster-access-secret)
         optional: true
-    - name: shared-data
-      emptyDir: {}
-    - name: oci-credentials
-      secret:
-        secretName: $(params.oci-credentials-secret)
-        optional: true
-        items:
-          - key: .dockerconfigjson
-            path: .dockerconfigjson
-  sidecars:
-    - name: port-forward
-      image: quay.io/konflux-ci/appstudio-utils:ab6b0b8e40e440158e7288c73aff1cf83a2cc8a9@sha256:24179f0efd06c65d16868c2d7eb82573cce8e43533de6cea14fec3b7446e0b14
-      volumeMounts:
-        - name: kubeconfig
-          mountPath: /credentials
-        - name: shared-data
-          mountPath: /shared
-      env:
-        - name: JOB_TYPE
-          value: $(params.job-type)
-        - name: CLUSTER_SECRET
-          value: $(params.cluster-access-secret)
-      script: |
-        #!/usr/bin/env bash
-        set -euo pipefail
-
-        echo "=== PORT FORWARD SIDECAR START ==="
-        echo "JOB_TYPE: ${JOB_TYPE}"
-        echo "cluster-access-secret param: ${CLUSTER_SECRET}"
-        echo ""
-
-        echo "Checking /credentials:"
-        ls -la /credentials/ 2>&1 || echo "Dir not found"
-        echo ""
-
-        if [[ -f /credentials/kubeconfig ]]; then
-          echo "✓ Found kubeconfig ($(wc -c < /credentials/kubeconfig) bytes)"
-        else
-          echo "✗ kubeconfig NOT FOUND"
-          echo "Secret expected: ${CLUSTER_SECRET}"
-          find /credentials -type f 2>/dev/null | head -10
-        fi
-        echo ""
-
-        # Skip port forwarding for periodic-stage jobs
-        if [[ "${JOB_TYPE}" == "periodic-stage" ]]; then
-          echo "INFO: Skipping port forward for periodic-stage job"
-          echo "skipped" > /shared/port-forward-status
-          sleep infinity
-          exit 0
-        fi
-
-        # Check if kubeconfig exists
-        if [[ ! -f /credentials/kubeconfig ]]; then
-          echo "ERROR: kubeconfig not found!"
-          if [[ -z "${CLUSTER_SECRET}" ]]; then
-            echo "CAUSE: cluster-access-secret parameter is EMPTY"
-            echo "Check Pipeline taskRef params mapping"
-          else
-            echo "CAUSE: Secret '${CLUSTER_SECRET}' not found or missing 'kubeconfig' key"
-            echo "Verify: kubectl get secret ${CLUSTER_SECRET} -o jsonpath='{.data.kubeconfig}'"
-          fi
-          echo "failed" > /shared/port-forward-status
-          sleep infinity
-          exit 1
-        fi
-
-        export KUBECONFIG=/credentials/kubeconfig
-        echo "✓ KUBECONFIG set to: ${KUBECONFIG}"
-        echo ""
-
-        echo "=== Port Forward Sidecar Starting ==="
-        echo "Waiting for Konflux UI deployment to be ready..."
-
-        # Wait for deployment
-        kubectl wait --for=condition=available --timeout=300s deployment/proxy -n konflux-ui || {
-          echo "ERROR: Konflux UI proxy deployment not ready"
-          kubectl get pods -n konflux-ui
-          echo "failed" > /shared/port-forward-status
-          exit 1
-        }
-
-        echo "✓ Deployment is ready"
-
-        # Get service and pod info
-        kubectl get svc proxy -n konflux-ui -o wide
-        echo ""
-
-        # Get pod name
-        POD_NAME=$(kubectl get pod -n konflux-ui -l app=proxy -o jsonpath='{.items[0].metadata.name}')
-        if [[ -z "${POD_NAME}" ]]; then
-          echo "ERROR: Could not find proxy pod"
-          kubectl get pods -n konflux-ui
-          echo "failed" > /shared/port-forward-status
-          exit 1
-        fi
-
-        echo "Found pod: ${POD_NAME}"
-        echo ""
-
-        # Get detailed pod information
-        echo "=== Pod Details ==="
-        kubectl get pod ${POD_NAME} -n konflux-ui -o wide
-        echo ""
-
-        echo "=== Container Ports Configuration ==="
-        kubectl get pod ${POD_NAME} -n konflux-ui -o jsonpath='{range .spec.containers[*]}Container: {.name}{"\n"}{range .ports[*]}  - {.name}: {.containerPort}/{.protocol}{"\n"}{end}{"\n"}{end}'
-        echo ""
-
-        # Get nginx container ports
-        NGINX_HTTP_PORT=$(kubectl get pod ${POD_NAME} -n konflux-ui -o jsonpath='{.spec.containers[?(@.name=="nginx")].ports[?(@.name=="web")].containerPort}')
-        NGINX_HTTPS_PORT=$(kubectl get pod ${POD_NAME} -n konflux-ui -o jsonpath='{.spec.containers[?(@.name=="nginx")].ports[?(@.name=="web-tls")].containerPort}')
-
-        echo "Nginx HTTP port (web): ${NGINX_HTTP_PORT}"
-        echo "Nginx HTTPS port (web-tls): ${NGINX_HTTPS_PORT}"
-        echo ""
-
-        # Check what's actually listening inside the pod
-        echo "=== Checking Listening Ports in Pod ==="
-        echo "Running 'ss -tln' in nginx container:"
-        kubectl exec ${POD_NAME} -n konflux-ui -c nginx -- ss -tln 2>/dev/null | grep LISTEN || echo "Could not run ss"
-        echo ""
-
-        echo "Running 'ss -tln' in oauth2-proxy container:"
-        kubectl exec ${POD_NAME} -n konflux-ui -c oauth2-proxy -- ss -tln 2>/dev/null | grep LISTEN || echo "Could not run ss"
-        echo ""
-
-        # Test connectivity from within the cluster
-        echo "=== Testing Pod Connectivity from Cluster ==="
-        POD_IP=$(kubectl get pod ${POD_NAME} -n konflux-ui -o jsonpath='{.status.podIP}')
-        echo "Pod IP: ${POD_IP}"
-
-        echo "Testing HTTP to pod IP:${NGINX_HTTP_PORT}..."
-        HTTP_TEST=$(timeout 5 kubectl exec ${POD_NAME} -n konflux-ui -c nginx -- curl -s -o /dev/null -w "%{http_code}" http://localhost:${NGINX_HTTP_PORT} 2>&1 || echo "failed")
-        echo "  Result: ${HTTP_TEST}"
-
-        echo "Testing HTTPS to pod IP:${NGINX_HTTPS_PORT}..."
-        HTTPS_TEST=$(timeout 5 kubectl exec ${POD_NAME} -n konflux-ui -c nginx -- curl -k -s -o /dev/null -w "%{http_code}" https://localhost:${NGINX_HTTPS_PORT} 2>&1 || echo "failed")
-        echo "  Result: ${HTTPS_TEST}"
-        echo ""
-
-        # Start port forward to nginx container's HTTPS port (9443)
-        # We use HTTPS because nginx definitely listens on 9443
-        echo "=========================================="
-        echo "STARTING PORT FORWARD"
-        echo "=========================================="
-        echo "Command: kubectl port-forward -n konflux-ui pod/${POD_NAME} 8080:${NGINX_HTTPS_PORT}"
-        echo "This will forward:"
-        echo "  localhost:8080 (in this sidecar) -> pod ${POD_NAME}:${NGINX_HTTPS_PORT} (nginx HTTPS)"
-        echo ""
-        echo "Port forward starting in background..."
-
-        # Start port-forward in background
-        kubectl port-forward -n konflux-ui pod/${POD_NAME} 8080:${NGINX_HTTPS_PORT} &
-        PF_PID=$!
-
-        echo "Port-forward process started with PID: ${PF_PID}"
-
-        # Wait for port-forward to be ready
-        echo "Waiting for port-forward to be ready..."
-        MAX_WAIT=30
-        ELAPSED=0
-        while [[ ${ELAPSED} -lt ${MAX_WAIT} ]]; do
-          # Use HTTPS with -k to ignore cert, since we're forwarding to port 9443 (HTTPS)
-          HTTP_CODE=$(curl -k -s -o /dev/null -w "%{http_code}" https://localhost:8080 2>/dev/null || echo "000")
-          echo "  Attempt $((ELAPSED + 1)): HTTP code = ${HTTP_CODE}"
-          if echo "${HTTP_CODE}" | grep -qE "^(200|301|302|304|401|403|404)$"; then
-            echo "✓ Port-forward is ready!"
-            break
-          fi
-          sleep 1
-          ELAPSED=$((ELAPSED + 1))
-        done
-
-        if [[ ${ELAPSED} -ge ${MAX_WAIT} ]]; then
-          echo "ERROR: Port-forward not ready after ${MAX_WAIT}s"
-          echo "Last HTTP code: ${HTTP_CODE}"
-          echo "failed" > /shared/port-forward-status
-          exit 1
-        fi
-
-        # Signal that port-forward is ready
-        echo "ready" > /shared/port-forward-status
-        echo "✓ Readiness marker created at /shared/port-forward-status"
-
-        # Keep sidecar alive by waiting for the port-forward process
-        echo "Port-forward is running. Waiting for process to complete..."
-        wait $PF_PID
+    - name: dshm
+      emptyDir:
+        medium: Memory 
   steps:
     - name: run-e2e-test
       image: quay.io/konflux_ui_qe/konflux-ui-tests:latest
       workingDir: /tmp/e2e
+      resources:
+        limits:
+          memory: 8Gi
+          cpu: '2'
+        requests:
+          memory: 8Gi
+          cpu: '1'
       volumeMounts:
-        - name: shared-data
-          mountPath: /shared
+        - name: kubeconfig
+          mountPath: /credentials
+          readOnly: true
+        - name: dshm
+          mountPath:/dev/shm
       env:
-        - name: JOB_SPEC
-          value: $(params.job-spec)
-        - name: JOB_TYPE
-          value: $(params.job-type)
-        - name: CYPRESS_LOCAL_CLUSTER
-          value: "true"
-        - name: CYPRESS_PERIODIC_RUN_STAGE
-          value: "false"
+        - name: KUBECONFIG
+          value: /credentials/kubeconfig
         - name: CYPRESS_USERNAME
           valueFrom:
             secretKeyRef:
@@ -284,462 +70,38 @@ spec:
             secretKeyRef:
               name: $(params.github-credentials-secret)
               key: token
-        - name: CYPRESS_PROJECT_ID
-          valueFrom:
-            secretKeyRef:
-              name: $(params.cypress-cloud-secret)
-              key: project-id
-              optional: true
-        - name: CYPRESS_RECORD_KEY
-          valueFrom:
-            secretKeyRef:
-              name: $(params.cypress-cloud-secret)
-              key: record-key
-              optional: true
       script: |
         #!/usr/bin/env bash
         set -euo pipefail
 
-        echo "=========================================="
-        echo "STEP-RUN-E2E-TEST"
-        echo "=========================================="
-        echo "=== Running Cypress E2E Tests ==="
-        echo "Job Type: ${JOB_TYPE}"
-        echo ""
-        echo "=== DEBUG: Task Parameters ==="
-        echo "Parameters received by this step:"
-        echo "  JOB_TYPE: ${JOB_TYPE}"
-        echo "  CYPRESS_LOCAL_CLUSTER: ${CYPRESS_LOCAL_CLUSTER}"
-        echo "  CYPRESS_PERIODIC_RUN_STAGE: ${CYPRESS_PERIODIC_RUN_STAGE}"
-        echo ""
-        echo "Note: cluster-access-secret is used by the port-forward sidecar"
-        echo "      Check sidecar logs for parameter passing details"
-        echo ""
-
-        # Verify CYPRESS_GH_TOKEN
-        if [[ -z "${CYPRESS_GH_TOKEN:-}" ]]; then
-          echo "ERROR: CYPRESS_GH_TOKEN is not set!"
-          exit 1
-        fi
-        echo "✓ CYPRESS_GH_TOKEN is set (length: ${#CYPRESS_GH_TOKEN})"
-        echo ""
-
-        # Configure based on job type
-        if [[ ${JOB_TYPE} == 'periodic-stage' ]]; then
-          echo "Running against stage environment..."
-          export CYPRESS_LOCAL_CLUSTER=false
-          export CYPRESS_PERIODIC_RUN_STAGE=true
+        echo "=== 1. Target URL Discovery ==="
+        if [[ -f "$KUBECONFIG" ]]; then
+          echo "Kubeconfig detected, searching for Konflux UI service..."
+          NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="ExternalIP")].address}' 2>/dev/null || echo "3.139.24.102")
+          NODE_PORT=$(kubectl get svc proxy -n konflux-ui -o jsonpath='{.spec.ports[?(@.name=="web-tls")].nodePort}' 2>/dev/null || echo "9443")
+          export CYPRESS_KONFLUX_BASE_URL="https://${NODE_IP}:${NODE_PORT}"
         else
-          echo "Running against local Kind cluster..."
-
-          # Wait for port-forward sidecar to be ready using shared marker file
-          echo "=== Waiting for port-forward sidecar ==="
-          echo "Checking for readiness marker at /shared/port-forward-status..."
-          echo ""
-          MAX_WAIT=60
-          ELAPSED=0
-
-          while [[ ${ELAPSED} -lt ${MAX_WAIT} ]]; do
-            if [[ -f /shared/port-forward-status ]]; then
-              STATUS=$(cat /shared/port-forward-status)
-              echo "Status file found! Content: '${STATUS}'"
-              if [[ "${STATUS}" == "ready" ]]; then
-                echo "✓ Port-forward sidecar is ready!"
-                break
-              elif [[ "${STATUS}" == "failed" ]]; then
-                echo ""
-                echo "=========================================="
-                echo "ERROR: Port-forward sidecar FAILED"
-                echo "=========================================="
-                echo ""
-                echo "The port-forward sidecar reported a failure."
-                echo "Check the 'port-forward' sidecar logs for details:"
-                echo ""
-                echo "  kubectl logs <pod-name> -c port-forward -n <namespace>"
-                echo ""
-                echo "Common issues:"
-                echo "  1. cluster-access-secret parameter is empty or not passed"
-                echo "  2. Secret doesn't exist in the namespace"
-                echo "  3. Secret exists but missing 'kubeconfig' key"
-                echo "  4. Deployment not ready (timeout waiting for proxy deployment)"
-                echo ""
-                exit 1
-              elif [[ "${STATUS}" == "skipped" ]]; then
-                echo "ERROR: Port-forward was skipped but required for local cluster"
-                echo "This should only happen for periodic-stage jobs."
-                exit 1
-              else
-                echo "Unknown status: '${STATUS}' - continuing to wait..."
-              fi
-            fi
-            echo "Waiting for port-forward readiness (${ELAPSED}s/${MAX_WAIT}s)..."
-            sleep 2
-            ELAPSED=$((ELAPSED + 2))
-          done
-
-          if [[ ${ELAPSED} -ge ${MAX_WAIT} ]]; then
-            echo ""
-            echo "=========================================="
-            echo "ERROR: Port-forward not ready after ${MAX_WAIT}s"
-            echo "=========================================="
-            echo ""
-            echo "Status file check:"
-            if [[ -f /shared/port-forward-status ]]; then
-              echo "  Status file exists with content: '$(cat /shared/port-forward-status)'"
-            else
-              echo "  ✗ Status file NOT FOUND at /shared/port-forward-status"
-              echo ""
-              echo "This means the port-forward sidecar never wrote the status file."
-              echo "Possible causes:"
-              echo "  1. Sidecar is still initializing"
-              echo "  2. Sidecar failed before writing status (check sidecar logs)"
-              echo "  3. Shared volume mount issue"
-              echo ""
-              echo "Check sidecar logs:"
-              echo "  kubectl logs <pod-name> -c port-forward -n <namespace>"
-            fi
-            echo ""
-            exit 1
-          fi
-          echo ""
-
-          # Port-forward maps localhost:8080 to nginx HTTPS port (9443)
-          export CYPRESS_KONFLUX_BASE_URL="https://localhost:8080"
+          echo "Kubeconfig not found, falling back to default URL..."
+          export CYPRESS_KONFLUX_BASE_URL="https://3.139.24.102:9443"
         fi
+        echo "✓ Base URL set to: ${CYPRESS_KONFLUX_BASE_URL}"
 
-        # Run tests
-        SPEC_FILE="tests/basic-happy-path.spec.ts"
-        echo ""
-        echo "Running: ${SPEC_FILE}"
-        echo "CYPRESS_KONFLUX_BASE_URL: ${CYPRESS_KONFLUX_BASE_URL:-not set}"
-        echo "CYPRESS_LOCAL_CLUSTER: ${CYPRESS_LOCAL_CLUSTER}"
-        echo "CYPRESS_PERIODIC_RUN_STAGE: ${CYPRESS_PERIODIC_RUN_STAGE}"
-        echo ""
-
-        # Build Cypress command with optional recording
-        CYPRESS_ARGS="--runner-ui -b chrome --spec ${SPEC_FILE}"
-
-        if [[ -n "${CYPRESS_PROJECT_ID:-}" && -n "${CYPRESS_RECORD_KEY:-}" ]]; then
-          echo "✓ Cypress Cloud recording enabled"
-          echo "  Project ID: ${CYPRESS_PROJECT_ID}"
-          CYPRESS_ARGS="${CYPRESS_ARGS} --record"
-
-          # Add tag if JOB_TYPE is set and not empty
-          if [[ -n "${JOB_TYPE:-}" ]]; then
-            CYPRESS_ARGS="${CYPRESS_ARGS} --tag ${JOB_TYPE}"
-            echo "  Tag: ${JOB_TYPE}"
-          fi
+        echo "=== 2. Display Setup ==="
+        if command -v Xvfb &> /dev/null; then
+          echo "Starting Xvfb on DISPLAY :99..."
+          Xvfb :99 -screen 0 1280x1024x24 &
+          export DISPLAY=:99
+          sleep 3 
         else
-          echo "ℹ Cypress Cloud recording disabled (PROJECT_ID or RECORD_KEY not set)"
+          echo "WARNING: Xvfb not found in image, browser may fail to start."
         fi
 
-        echo "Running: npx cypress run ${CYPRESS_ARGS}"
-        npx cypress run ${CYPRESS_ARGS} || EXIT_CODE=$?
+        echo "=== 3. Execution ==="
+        npx cypress run \
+          --browser chrome \
+          --spec "$(params.spec-file)" \
+          --config video=false,screenshot=false,numTestsKeptInMemory=0 \
+          --project . \
+          -- --args "--no-sandbox --disable-dev-shm-usage --no-zygote --disable-gpu --disable-software-rasterizer"
 
-        EXIT_CODE=${EXIT_CODE:-0}
-        echo ${EXIT_CODE} > /tmp/e2e-exit-code
-
-        # Show artifact locations
-        echo ""
-        echo "=========================================="
-        echo "TEST ARTIFACTS SUMMARY"
-        echo "=========================================="
-
-        if [[ -d /tmp/e2e/cypress ]]; then
-          echo ""
-          echo "Artifacts available at:"
-          echo "  Location: /tmp/e2e/cypress"
-          echo ""
-
-          if ls /tmp/e2e/cypress/videos/*.mp4 >/dev/null 2>&1; then
-            echo "Videos:"
-            ls -lh /tmp/e2e/cypress/videos/
-            echo ""
-          fi
-
-          if [[ -d /tmp/e2e/cypress/screenshots ]] && [[ -n "$(ls -A /tmp/e2e/cypress/screenshots 2>/dev/null)" ]]; then
-            echo "Screenshots:"
-            find /tmp/e2e/cypress/screenshots -type f
-            echo ""
-          fi
-
-          if [[ -f /tmp/e2e/cypress/index.html ]]; then
-            echo "HTML Report:"
-            echo "  /tmp/e2e/cypress/index.html"
-            echo ""
-          fi
-        fi
-
-        # Debug pause for manual artifact inspection
-        DEBUG_PAUSE=$(params.debug-pause-minutes)
-        if [[ "${DEBUG_PAUSE}" != "0" ]] && [[ -n "${DEBUG_PAUSE}" ]]; then
-          PAUSE_SECONDS=$((DEBUG_PAUSE * 60))
-
-          echo "=========================================="
-          echo "DEBUG PAUSE ACTIVATED"
-          echo "=========================================="
-          echo ""
-          echo "Pod will remain alive for ${DEBUG_PAUSE} minute(s)"
-          echo ""
-          echo "To download artifacts, run:"
-          echo ""
-          echo "  # Get this pod name"
-          echo "  POD_NAME=\$(kubectl get pods -n wlin-tenant -l tekton.dev/taskRun --field-selector status.phase=Running -o jsonpath='{.items[0].metadata.name}')"
-          echo ""
-          echo "  # Download all artifacts"
-          echo "  kubectl cp wlin-tenant/\${POD_NAME}:/tmp/e2e/cypress ./cypress-artifacts -c run-e2e-test"
-          echo ""
-          echo "  # Download video only"
-          echo "  kubectl cp wlin-tenant/\${POD_NAME}:/tmp/e2e/cypress/videos ./videos -c run-e2e-test"
-          echo ""
-          echo "  # Download screenshots only"
-          echo "  kubectl cp wlin-tenant/\${POD_NAME}:/tmp/e2e/cypress/screenshots ./screenshots -c run-e2e-test"
-          echo ""
-          echo "  # Download HTML report"
-          echo "  kubectl cp wlin-tenant/\${POD_NAME}:/tmp/e2e/cypress/index.html ./test-report.html -c run-e2e-test"
-          echo ""
-          echo "Pausing now..."
-          echo ""
-
-          # Countdown with status updates
-          REMAINING=${PAUSE_SECONDS}
-          while [[ ${REMAINING} -gt 0 ]]; do
-            MINS=$((REMAINING / 60))
-            SECS=$((REMAINING % 60))
-            echo "⏳ Time remaining: ${MINS}m ${SECS}s (Cancel PipelineRun to exit early)"
-            sleep 60
-            REMAINING=$((REMAINING - 60))
-          done
-
-          echo ""
-          echo "Debug pause complete. Continuing..."
-        fi
-
-        exit ${EXIT_CODE}
-
-    - name: upload-artifacts-to-oci
-      image: quay.io/konflux-ci/oras:latest
-      workingDir: /tmp/e2e
-      env:
-        - name: OCI_STORAGE
-          value: $(params.oci-storage)
-        - name: GIT_REVISION
-          value: $(params.git-revision)
-        - name: JOB_TYPE
-          value: $(params.job-type)
-        - name: REGISTRY_AUTH_FILE
-          value: /secrets/.dockerconfigjson
-        - name: PIPELINE_RUN_NAME
-          valueFrom:
-            fieldRef:
-              fieldPath: metadata.labels['tekton.dev/pipelineRun']
-      volumeMounts:
-        - name: oci-credentials
-          mountPath: /secrets
-          readOnly: true
-      script: |
-        #!/usr/bin/env bash
-        set -euo pipefail
-
-        # Skip if OCI storage not configured
-        if [[ -z "${OCI_STORAGE}" || "${OCI_STORAGE}" == "" ]]; then
-          echo "ℹ OCI storage not configured, skipping artifact upload"
-          exit 0
-        fi
-
-        echo "=========================================="
-        echo "UPLOADING ARTIFACTS TO OCI REGISTRY"
-        echo "=========================================="
-        echo ""
-
-        # Check if artifacts exist
-        if [[ ! -d /tmp/e2e/cypress ]]; then
-          echo "⚠ No artifacts found at /tmp/e2e/cypress"
-          exit 0
-        fi
-
-        # Verify authentication
-        if [[ ! -f "${REGISTRY_AUTH_FILE}" ]]; then
-          echo "ERROR: Registry auth file not found at ${REGISTRY_AUTH_FILE}"
-          echo "Make sure the secret '$(params.oci-credentials-secret)' exists and contains '.dockerconfigjson' key"
-          exit 1
-        fi
-
-        echo "✓ Registry authentication file found"
-        echo ""
-
-        # Generate unique tag based on git revision and timestamp
-        SHORT_SHA="${GIT_REVISION:0:7}"
-        TIMESTAMP=$(date -u +%Y%m%d-%H%M%S)
-
-        # Build the full OCI reference with tag
-        # Remove any existing tag from OCI_STORAGE base
-        OCI_BASE="${OCI_STORAGE%%:*}"
-
-        # Create unique tag: <short-sha>-<timestamp>
-        TAG="${SHORT_SHA}-${TIMESTAMP}"
-        OCI_REF="${OCI_BASE}:${TAG}"
-
-        echo "Configuration:"
-        echo "  Base repository: ${OCI_BASE}"
-        echo "  Tag: ${TAG}"
-        echo "  Full reference: ${OCI_REF}"
-        echo "  Git revision: ${GIT_REVISION}"
-        echo "  Job type: ${JOB_TYPE}"
-        echo "  PipelineRun: ${PIPELINE_RUN_NAME:-N/A}"
-        echo ""
-
-        cd /tmp/e2e/cypress
-
-        # Create a tarball of all artifacts
-        TARBALL="/tmp/cypress-artifacts.tar.gz"
-        echo "Creating tarball of artifacts..."
-        tar czf "${TARBALL}" . 2>/dev/null || {
-          echo "ERROR: Failed to create tarball"
-          exit 1
-        }
-
-        if [[ ! -f "${TARBALL}" ]]; then
-          echo "ERROR: Tarball was not created"
-          exit 1
-        fi
-
-        TARBALL_SIZE=$(du -h "${TARBALL}" | cut -f1)
-        echo "✓ Tarball created: ${TARBALL_SIZE}"
-        echo ""
-
-        # Prepare annotations with metadata
-        CREATED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-
-        echo "Uploading to OCI registry..."
-        echo "Command: oras push ${OCI_REF}"
-        echo ""
-
-        # Upload using oras with rich annotations
-        oras push "${OCI_REF}" \
-          "${TARBALL}:application/gzip" \
-          --annotation "org.opencontainers.image.title=cypress-e2e-artifacts" \
-          --annotation "org.opencontainers.image.description=Cypress test artifacts (videos, screenshots, reports)" \
-          --annotation "org.opencontainers.image.created=${CREATED_AT}" \
-          --annotation "org.opencontainers.image.revision=${GIT_REVISION}" \
-          --annotation "dev.konflux.job-type=${JOB_TYPE}" \
-          --annotation "dev.konflux.pipeline-run=${PIPELINE_RUN_NAME:-unknown}" \
-          --annotation "dev.konflux.artifact-type=cypress-test-results" || {
-          echo ""
-          echo "ERROR: Failed to push artifacts to OCI registry"
-          echo "This might be due to:"
-          echo "  1. Invalid credentials in secret '$(params.oci-credentials-secret)'"
-          echo "  2. Insufficient permissions to push to ${OCI_BASE}"
-          echo "  3. Network connectivity issues"
-          echo ""
-          echo "To verify credentials:"
-          echo "  oc get secret $(params.oci-credentials-secret) -o jsonpath='{.data.\.dockerconfigjson}' | base64 -d | jq"
-          echo ""
-          exit 1
-        }
-
-        echo ""
-        echo "=========================================="
-        echo "✓ ARTIFACTS UPLOADED SUCCESSFULLY"
-        echo "=========================================="
-        echo ""
-        echo "Artifact Details:"
-        echo "  Repository: ${OCI_BASE}"
-        echo "  Tag: ${TAG}"
-        echo "  Full reference: ${OCI_REF}"
-        echo "  Size: ${TARBALL_SIZE}"
-        echo "  Created: ${CREATED_AT}"
-        echo ""
-        echo "To download and extract artifacts:"
-        echo "  oras pull ${OCI_REF}"
-        echo "  tar xzf cypress-artifacts.tar.gz"
-        echo ""
-        echo "To view in browser:"
-        echo "  https://quay.io/repository/konflux_ui_qe/pr-check-artefacts?tab=tags"
-        echo ""
-
-    - name: report-to-slack
-      image: quay.io/konflux-ci/appstudio-utils:ab6b0b8e40e440158e7288c73aff1cf83a2cc8a9@sha256:24179f0efd06c65d16868c2d7eb82573cce8e43533de6cea14fec3b7446e0b14
-      env:
-        - name: JOB_TYPE
-          value: $(params.job-type)
-        - name: SLACK_TOKEN
-          valueFrom:
-            secretKeyRef:
-              name: $(params.slack-credentials-secret)
-              key: token
-              optional: true
-        - name: SLACK_CHANNEL_ID
-          valueFrom:
-            configMapKeyRef:
-              name: slack-config
-              key: channel-id
-              optional: true
-        - name: PIPELINE_RUN_NAME
-          valueFrom:
-            fieldRef:
-              fieldPath: metadata.labels['tekton.dev/pipelineRun']
-        - name: NAMESPACE
-          valueFrom:
-            fieldRef:
-              fieldPath: metadata.namespace
-      script: |
-        #!/usr/bin/env bash
-
-        # Only send Slack report for periodic jobs
-        if [[ ! ${JOB_TYPE} == periodic* ]]; then
-          echo "Not a periodic job (JOB_TYPE=${JOB_TYPE}), skipping Slack report"
-          exit 0
-        fi
-
-        # Check if Slack is configured
-        if [[ -z "${SLACK_TOKEN}" || -z "${SLACK_CHANNEL_ID}" ]]; then
-          echo "Slack not configured, skipping report"
-          exit 0
-        fi
-
-        # Determine test outcome
-        E2E_OUTCOME="success"
-        if [[ -f /tmp/e2e-exit-code ]] && [[ $(cat /tmp/e2e-exit-code) -ne 0 ]]; then
-          E2E_OUTCOME="failure"
-        fi
-
-        # Generate message
-        if [[ $E2E_OUTCOME == "success" ]]; then
-          ICON=":white_check_mark:"
-        else
-          ICON=":x:"
-        fi
-
-        DATE_STR=$(date '+%b %-d')
-
-        case "$JOB_TYPE" in
-          "periodic-local")
-            JOB_DESC="LOCAL Periodic job"
-            ;;
-          "periodic-stage")
-            JOB_DESC="STAGE Periodic job"
-            ;;
-          "periodic-cleanup")
-            JOB_DESC="CLEANUP Periodic job"
-            ;;
-          *)
-            JOB_DESC="Periodic job (${JOB_TYPE})"
-            ;;
-        esac
-
-        # Add PipelineRun info to message
-        if [[ -n "${PIPELINE_RUN_NAME}" ]]; then
-          MESSAGE="${ICON} Report ${DATE_STR}: ${JOB_DESC} (PipelineRun: ${PIPELINE_RUN_NAME})"
-        else
-          MESSAGE="${ICON} Report ${DATE_STR}: ${JOB_DESC}"
-        fi
-
-        echo "Sending Slack notification: ${MESSAGE}"
-
-        # Send to Slack
-        curl -X POST https://slack.com/api/chat.postMessage \
-          -H "Authorization: Bearer ${SLACK_TOKEN}" \
-          -H "Content-Type: application/json; charset=utf-8" \
-          -d "{\"channel\": \"${SLACK_CHANNEL_ID}\", \"text\": \"${MESSAGE}\"}" \
-          || echo "Failed to send Slack notification (non-fatal)"
+        echo "✓ E2E Tests completed successfully."
