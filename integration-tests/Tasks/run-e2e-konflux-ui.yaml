@@ -1,4 +1,3 @@
----
 apiVersion: tekton.dev/v1beta1
 kind: Task
 metadata:
@@ -9,137 +8,53 @@ metadata:
     tekton.dev/tags: 'e2e,cypress,konflux-ui'
 spec:
   description: >-
-    Runs E2E tests for Konflux UI using Cypress
+    A clean, native Tekton Task to run Konflux UI E2E tests. 
+    No Podman, no sidecars, no OCI overhead.
   params:
-    - name: job-spec
-      description: 'Job specification metadata'
-      type: string
     - name: job-type
-      description: 'Type of job (e.g., periodic-stage, periodic, pr)'
       type: string
       default: 'pr-check'
-    - name: git-url
-      description: 'Git repository URL'
+    - name: cluster-access-secret
       type: string
-    - name: git-revision
-      description: 'Git revision to checkout'
-      type: string
-      default: 'main'
+      description: 'Secret name containing kubeconfig for the Kind cluster'
+      default: ''
     - name: cypress-credentials-secret
-      description: 'Secret name containing Cypress credentials (username, password)'
       type: string
       default: 'cypress-credentials'
-    - name: slack-credentials-secret
-      description: 'Secret name containing Slack credentials'
-      type: string
-      default: 'slack-credentials'
     - name: github-credentials-secret
-      description: 'Secret name containing GitHub token'
       type: string
       default: 'github-credentials'
-    - name: cluster-access-secret
-      description: 'Secret name containing kubeconfig for accessing Kind cluster'
+    - name: spec-file
       type: string
-      default: ''
-    - name: cypress-cloud-secret
-      description: 'Secret name containing Cypress Cloud credentials (project-id, record-key)'
-      type: string
-      default: 'cypress-cloud-credentials'
-    - name: oci-storage
-      description: 'OCI repository to store test artifacts (e.g., quay.io/user/repo:tag)'
-      type: string
-      default: ''
-    - name: oci-credentials-secret
-      description: 'Secret containing OCI registry credentials'
-      type: string
-      default: 'quay-secret'
-  results:
-    - name: e2e-output
-      description: 'Result of e2e test'
+      default: 'tests/basic-happy-path.spec.ts'
   volumes:
     - name: kubeconfig
       secret:
         secretName: $(params.cluster-access-secret)
         optional: true
-    - name: shared-data
-      emptyDir: {}
-    - name: oci-credentials
-      secret:
-        secretName: $(params.oci-credentials-secret)
-        optional: true
-        items:
-          - key: .dockerconfigjson
-            path: .dockerconfigjson
-  sidecars:
-    - name: port-forward
-      image: quay.io/konflux-ci/appstudio-utils:ab6b0b8e40e440158e7288c73aff1cf83a2cc8a9@sha256:24179f0efd06c65d16868c2d7eb82573cce8e43533de6cea14fec3b7446e0b14
-      volumeMounts:
-        - name: kubeconfig
-          mountPath: /credentials
-        - name: shared-data
-          mountPath: /shared
-      env:
-        - name: JOB_TYPE
-          value: $(params.job-type)
-        - name: CLUSTER_SECRET
-          value: $(params.cluster-access-secret)
-      script: |
-        #!/usr/bin/env bash
-        set -euo pipefail
-
-        echo "=== PORT FORWARD SIDECAR START ==="
-        if [[ ! -f /credentials/kubeconfig ]]; then
-          echo "ERROR: kubeconfig not found!"
-          echo "failed" > /shared/port-forward-status
-          exit 1
-        fi
-
-        export KUBECONFIG=/credentials/kubeconfig
-
-        # Wait for deployment
-        kubectl wait --for=condition=available --timeout=300s deployment/proxy -n konflux-ui || {
-          echo "failed" > /shared/port-forward-status
-          exit 1
-        }
-
-        POD_NAME=$(kubectl get pod -n konflux-ui -l app=proxy -o jsonpath='{.items[0].metadata.name}')
-        NGINX_HTTPS_PORT=$(kubectl get pod ${POD_NAME} -n konflux-ui -o jsonpath='{.spec.containers[?(@.name=="nginx")].ports[?(@.name=="web-tls")].containerPort}')
-
-        kubectl port-forward -n konflux-ui pod/${POD_NAME} 8080:${NGINX_HTTPS_PORT} &
-        PF_PID=$!
-
-        # Wait for port-forward
-        MAX_WAIT=30
-        for ((i=0; i<MAX_WAIT; i++)); do
-          if curl -k -s -o /dev/null https://localhost:8080; then
-            echo "ready" > /shared/port-forward-status
-            wait $PF_PID
-            exit 0
-          fi
-          sleep 1
-        done
-        echo "failed" > /shared/port-forward-status
-        exit 1
-
+    - name: dshm
+      emptyDir:
+        medium: Memory # 关键：通过内存挂载 /dev/shm，彻底解决 Chrome Renderer Crash
   steps:
     - name: run-e2e-test
       image: quay.io/konflux_ui_qe/konflux-ui-tests:latest
       workingDir: /tmp/e2e
       resources:
         limits:
-          memory: 4Gi
-          cpu: "2"
+          memory: 6Gi # 建议保留 6Gi，确保浏览器渲染大型 React 应用时不 OOM
+          cpu: '2'
         requests:
-          memory: 2Gi
-          cpu: "1"
+          memory: 4Gi
+          cpu: '1'
       volumeMounts:
-        - name: shared-data
-          mountPath: /shared
+        - name: kubeconfig
+          mountPath: /credentials
+          readOnly: true
+        - name: dshm
+          mountPath: /dev/shm
       env:
-        - name: JOB_SPEC
-          value: $(params.job-spec)
-        - name: JOB_TYPE
-          value: $(params.job-type)
+        - name: KUBECONFIG
+          value: /credentials/kubeconfig
         - name: CYPRESS_USERNAME
           valueFrom:
             secretKeyRef:
@@ -159,74 +74,40 @@ spec:
         #!/usr/bin/env bash
         set -euo pipefail
 
-        echo "=== Waiting for port-forward sidecar ==="
-        MAX_WAIT=60
-        for ((i=0; i<MAX_WAIT; i+=2)); do
-          if [[ -f /shared/port-forward-status ]]; then
-            STATUS=$(cat /shared/port-forward-status)
-            if [[ "${STATUS}" == "ready" ]]; then
-              echo "✓ Sidecar ready"
-              break
-            elif [[ "${STATUS}" == "failed" ]]; then
-              echo "ERROR: Sidecar failed"
-              exit 1
-            fi
-          fi
-          sleep 2
-        done
+        echo "=== 1. Target URL Discovery ==="
+        # 动态获取 UI 访问地址：优先尝试从 K8s 集群获取 ExternalIP 和 NodePort
+        if [[ -f "$KUBECONFIG" ]]; then
+          echo "Kubeconfig detected, searching for Konflux UI service..."
+          NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="ExternalIP")].address}' 2>/dev/null || echo "3.139.24.102")
+          NODE_PORT=$(kubectl get svc proxy -n konflux-ui -o jsonpath='{.spec.ports[?(@.name=="web-tls")].nodePort}' 2>/dev/null || echo "9443")
+          export CYPRESS_KONFLUX_BASE_URL="https://${NODE_IP}:${NODE_PORT}"
+        else
+          echo "Kubeconfig not found, falling back to default URL..."
+          export CYPRESS_KONFLUX_BASE_URL="https://3.139.24.102:9443"
+        fi
+        echo "✓ Base URL set to: ${CYPRESS_KONFLUX_BASE_URL}"
 
-        export CYPRESS_KONFLUX_BASE_URL="https://3.139.24.102:9443"
+        echo "=== 2. Display Setup ==="
+        # 启动 Xvfb (虚拟显示器)，这是 Headless 模式下 Chrome 稳定运行的必备条件
+        if command -v Xvfb &> /dev/null; then
+          echo "Starting Xvfb on DISPLAY :99..."
+          Xvfb :99 -screen 0 1280x1024x24 &
+          export DISPLAY=:99
+          sleep 3 # 等待 X Server 初始化
+        else
+          echo "WARNING: Xvfb not found in image, browser may fail to start."
+        fi
 
-        echo "Running Cypress tests..."
+        echo "=== 3. Execution ==="
+        # 核心执行命令：
+        # --no-sandbox: 容器环境必备参数
+        # --disable-dev-shm-usage: 配合 dshm 卷，防止内存溢出崩溃
+        # --no-zygote: 解决权限不足导致的 OOM Score 调整失败
         npx cypress run \
           --browser chrome \
-          --spec tests/basic-happy-path.spec.ts \
+          --spec "$(params.spec-file)" \
           --config video=false,screenshot=false \
           --project . \
-          -- --args "--disable-dev-shm-usage --no-sandbox --disable-gpu --disable-software-rasterizer --disable-extensions"
-                EXIT_CODE=${EXIT_CODE:-0}
-                echo ${EXIT_CODE} > /tmp/e2e-exit-code
-                exit ${EXIT_CODE}
+          -- --args "--no-sandbox --disable-dev-shm-usage --no-zygote --disable-gpu --disable-software-rasterizer"
 
-    - name: upload-artifacts-to-oci
-      image: quay.io/konflux-ci/oras:latest
-      workingDir: /tmp/e2e
-      env:
-        - name: OCI_STORAGE
-          value: $(params.oci-storage)
-        - name: GIT_REVISION
-          value: $(params.git-revision)
-        - name: REGISTRY_AUTH_FILE
-          value: /secrets/.dockerconfigjson
-      volumeMounts:
-        - name: oci-credentials
-          mountPath: /secrets
-          readOnly: true
-      script: |
-        #!/usr/bin/env bash
-        set -euo pipefail
-        if [[ -z "${OCI_STORAGE}" ]]; then exit 0; fi
-
-        cd /tmp/e2e/cypress
-        tar czf /tmp/artifacts.tar.gz .
-        oras push "${OCI_STORAGE}:${GIT_REVISION:0:7}" /tmp/artifacts.tar.gz:application/gzip
-
-    - name: report-to-slack
-      image: quay.io/konflux-ci/appstudio-utils:ab6b0b8e40e440158e7288c73aff1cf83a2cc8a9@sha256:24179f0efd06c65d16868c2d7eb82573cce8e43533de6cea14fec3b7446e0b14
-      env:
-        - name: JOB_TYPE
-          value: $(params.job-type)
-        - name: SLACK_TOKEN
-          valueFrom:
-            secretKeyRef:
-              name: $(params.slack-credentials-secret)
-              key: token
-              optional: true
-      script: |
-        #!/usr/bin/env bash
-        if [[ ! ${JOB_TYPE} == periodic* || -z "${SLACK_TOKEN}" ]]; then exit 0; fi
-
-        RESULT="success"
-        if [[ -f /tmp/e2e-exit-code && $(cat /tmp/e2e-exit-code) -ne 0 ]]; then RESULT="failure"; fi
-
-        echo "Sending Slack notification: ${RESULT}"
+        echo "✓ E2E Tests completed successfully."
