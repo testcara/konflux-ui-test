@@ -75,15 +75,15 @@ spec:
         set -euo pipefail
 
         echo "=== 1. Target URL Discovery ==="
-        if [[ -f "$KUBECONFIG" ]]; then
-          echo "Kubeconfig detected, searching for Konflux UI service..."
-          NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="ExternalIP")].address}' 2>/dev/null || echo "3.139.24.102")
-          NODE_PORT=$(kubectl get svc proxy -n konflux-ui -o jsonpath='{.spec.ports[?(@.name=="web-tls")].nodePort}' 2>/dev/null || echo "9443")
-          export CYPRESS_KONFLUX_BASE_URL="https://${NODE_IP}:${NODE_PORT}"
-        else
-          echo "Kubeconfig not found, falling back to default URL..."
-          export CYPRESS_KONFLUX_BASE_URL="https://18.119.225.133:9443"
-        fi
+        //  if [[ -f "$KUBECONFIG" ]]; then
+        //   echo "Kubeconfig detected, searching for Konflux UI service..."
+        //    NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="ExternalIP")].address}' 2>/dev/null || echo "3.139.24.102")
+        //    NODE_PORT=$(kubectl get svc proxy -n konflux-ui -o jsonpath='{.spec.ports[?(@.name=="web-tls")].nodePort}' 2>/dev/null || echo "9443")
+        //    export CYPRESS_KONFLUX_BASE_URL="https://${NODE_IP}:${NODE_PORT}"
+        // else
+        echo "Kubeconfig not found, falling back to default URL..."
+        export CYPRESS_KONFLUX_BASE_URL="https://18.119.225.133:9443"
+        //fi
         echo "✓ Base URL set to: ${CYPRESS_KONFLUX_BASE_URL}"
 
         echo "=== 2. Display Setup ==="
