@@ -76,7 +76,7 @@ spec:
 
         echo "=== 1. Target URL Discovery ==="
         echo "Kubeconfig not found, falling back to default URL..."
-        export CYPRESS_KONFLUX_BASE_URL="https://18.119.225.133:9443"
+        export CYPRESS_KONFLUX_BASE_URL="https://3.23.21.1:9443"
         echo "✓ Base URL set to: ${CYPRESS_KONFLUX_BASE_URL}"
 
         echo "=== 2. Display Setup ==="
