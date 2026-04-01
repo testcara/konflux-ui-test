@@ -70,31 +70,62 @@ spec:
             secretKeyRef:
               name: $(params.github-credentials-secret)
               key: token
+        - name: CYPRESS_PROJECT_ID
+          valueFrom:
+            secretKeyRef:
+              name: $(params.cypress-cloud-secret)
+              key: project-id
+        - name: CYPRESS_RECORD_KEY
+          valueFrom:
+            secretKeyRef:
+              name: $(params.cypress-cloud-secret)
+              key: record-key
       script: |
         #!/usr/bin/env bash
         set -euo pipefail
+        echo "=== 1. 环境检查 ==="
+        echo "Cypress Project ID: ${CYPRESS_PROJECT_ID:-'未设置 (将使用配置文件内定义)'}"
+        if [[ -z "${CYPRESS_RECORD_KEY}" ]]; then
+            echo "❌ 错误: 未发现 CYPRESS_RECORD_KEY，无法上传结果到 Cloud。"
+            exit 1
+        fi
 
-        echo "=== 1. Target URL Discovery ==="
-        echo "Kubeconfig not found, falling back to default URL..."
-        export CYPRESS_KONFLUX_BASE_URL="https://3.23.21.1:9443"
-        echo "✓ Base URL set to: ${CYPRESS_KONFLUX_BASE_URL}"
-
-        echo "=== 2. Display Setup ==="
+        echo "=== 2. 启动虚拟显示器 (Xvfb) ==="
         if command -v Xvfb &> /dev/null; then
-          echo "Starting Xvfb on DISPLAY :99..."
           Xvfb :99 -screen 0 1280x1024x24 &
           export DISPLAY=:99
           sleep 3 
+          echo "✓ Xvfb 已启动"
         else
-          echo "WARNING: Xvfb not found in image, browser may fail to start."
+          echo "⚠️ 警告: 未找到 Xvfb，浏览器可能无法在 headless 模式下正常运行"
         fi
 
-        echo "=== 3. Execution ==="
+        echo "=== 3. 执行测试并录制到 Cypress Cloud ==="
+
+        # 构建运行命令
+        # --record: 开启录制
+        # --key: 授权密钥
+        # --tag: 方便在 Dashboard 过滤
+        # --config: 确保开启视频和截图上传
         npx cypress run \
+          --record \
+          --key "${CYPRESS_RECORD_KEY}" \
+          --tag "$(params.job-type)" \
           --browser chrome \
           --spec "$(params.spec-file)" \
-          --config video=false,screenshot=false,numTestsKeptInMemory=0 \
+          --config video=true,screenshot=true,videoUploadOnPasses=false \
           --project . \
-          -- --args "--no-sandbox --disable-dev-shm-usage --no-zygote --disable-gpu --disable-software-rasterizer"
+          -- --args "--no-sandbox --disable-dev-shm-usage --no-zygote --disable-gpu"
 
-        echo "✓ E2E Tests completed successfully."
+        TEST_RESULT=$?
+
+        echo "--------------------------------------------------"
+        if [ $TEST_RESULT -eq 0 ]; then
+          echo "✅ 测试通过！请前往 Cypress Cloud 查看详细报告。"
+        else
+          echo "❌ 测试失败 (Exit Code: $TEST_RESULT)。"
+          echo "🔍 失败详情、截图和视频已同步至 Cypress Cloud Dashboard。"
+        fi
+        echo "--------------------------------------------------"
+
+        exit $TEST_RESULT
