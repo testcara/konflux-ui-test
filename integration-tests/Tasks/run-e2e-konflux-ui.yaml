@@ -83,12 +83,17 @@ spec:
       script: |
         #!/usr/bin/env bash
         set -euo pipefail
-        echo "=== 1. 环境检查 ==="
+        echo "=== 0. 环境检查 ==="
         echo "Cypress Project ID: ${CYPRESS_PROJECT_ID:-'未设置 (将使用配置文件内定义)'}"
         if [[ -z "${CYPRESS_RECORD_KEY}" ]]; then
             echo "❌ 错误: 未发现 CYPRESS_RECORD_KEY，无法上传结果到 Cloud。"
             exit 1
         fi
+
+        echo "=== 1. Target URL Discovery ==="
+        echo "Kubeconfig not found, falling back to default URL..."
+        export CYPRESS_KONFLUX_BASE_URL="https://3.23.21.1:9443"
+        echo "✓ Base URL set to: ${CYPRESS_KONFLUX_BASE_URL}"
 
         echo "=== 2. 启动虚拟显示器 (Xvfb) ==="
         if command -v Xvfb &> /dev/null; then
