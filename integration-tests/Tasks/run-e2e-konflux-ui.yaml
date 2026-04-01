@@ -113,12 +113,12 @@ spec:
         # --tag: 方便在 Dashboard 过滤
         # --config: 确保开启视频和截图上传
         npx cypress run \
-          --tag "$(params.job-type)" \
           --browser chrome \
           --spec "$(params.spec-file)" \
-          --config video=true,screenshot=true,videoUploadOnPasses=false \
+          --config video=false,screenshots=false \
           --project . \
-          -- --args "--no-sandbox --disable-dev-shm-usage --no-zygote --disable-gpu"
+          -- --args "--no-sandbox --disable-dev-shm-usage --no-zygote --disable-gpu --disable-software-rasterizer"
+
         #npx cypress run \
         #  --record \
         #  --key "${CYPRESS_RECORD_KEY}" \
