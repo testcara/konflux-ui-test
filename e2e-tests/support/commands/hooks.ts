@@ -1,3 +1,4 @@
+import cypress from 'cypress';
 import { Common } from '../../utils/Common';
 import { Login } from '../../utils/Login';
 
@@ -17,12 +18,16 @@ before(() => {
     'getting-started-modal',
     JSON.stringify({ 'application-list-getting-started-modal': true }),
   );
+  console.log('----debug----')
 
   if (Cypress.env('LOCAL_CLUSTER')) {
+    console.log('testing local')
     Login.localKonfluxLogin();
   } else if (Cypress.env('PERIODIC_RUN_STAGE')) {
+    console.log('testing staging')
     Login.stageKonfluxLogin();
   } else {
+    console.log('testing else')
     Login.login();
   }
 });
