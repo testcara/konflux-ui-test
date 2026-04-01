@@ -18,18 +18,19 @@ before(() => {
     'getting-started-modal',
     JSON.stringify({ 'application-list-getting-started-modal': true }),
   );
-  console.log('----debug----')
+  cy.log('----debug----')
 
   if (Cypress.env('LOCAL_CLUSTER')) {
-    console.log('testing local')
+    cy.log('testing local')
     Login.localKonfluxLogin();
   } else if (Cypress.env('PERIODIC_RUN_STAGE')) {
-    console.log('testing staging')
+    cy.log('testing staging')
     Login.stageKonfluxLogin();
   } else {
-    console.log('testing else')
+    cy.log('testing else')
     Login.login();
   }
+  cy.log('logged')
 });
 
 afterEach(function () {
