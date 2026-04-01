@@ -37,7 +37,7 @@ spec:
         medium: Memory
   steps:
     - name: run-e2e-test
-      image: quay.io/konflux_ui_qe/konflux-ui-tests:latest
+      image: quay.io/redhat-user-workloads-stage/wlin-tenant/cara-konflux-ui-test-b1228:latest
       workingDir: /tmp/e2e
       resources:
         limits:
