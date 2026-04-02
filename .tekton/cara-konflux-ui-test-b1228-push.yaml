@@ -21,7 +21,7 @@ spec:
     - name: revision
       value: '{{revision}}'
     - name: output-image
-      value: quay.io/redhat-user-workloads/wlin-tenant/konflux-ui-test/cara-konflux-ui-test-b1228:{{revision}}
+      value: quay.io/redhat-user-workloads-stage/wlin-tenant/cara-konflux-ui-test-b1228:{{revision}}
     - name: dockerfile
       value: Dockerfile
     - name: path-context
