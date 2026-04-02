@@ -84,7 +84,7 @@ spec:
         #!/usr/bin/env bash
         set -euo pipefail
 
-        CYPRESS_GH_TOKEN=${CYPRESS_GH_TOKEN} CYPRESS_LOCAL_CLUSTER=true CYPRESS_KONFLUX_BASE_URL=https://16.145.120.144:9443 yarn run cy:run
+        CYPRESS_GH_TOKEN=${CYPRESS_GH_TOKEN} CYPRESS_LOCAL_CLUSTER=true CYPRESS_KONFLUX_BASE_URL=https://44.227.103.155:9443 yarn run cy:run
         #echo "=== 1. 环境检查 ==="
         #echo "Cypress Project ID: ${CYPRESS_PROJECT_ID:-'未设置 (将使用配置文件内定义)'}"
         #if [[ -z "${CYPRESS_RECORD_KEY}" ]]; then
