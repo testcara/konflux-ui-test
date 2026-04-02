@@ -13,7 +13,7 @@ metadata:
     appstudio.openshift.io/component: cara-konflux-ui-test-b1228
     pipelines.appstudio.openshift.io/type: build
   name: cara-konflux-ui-test-b1228-on-push
-  namespace: wlin-tenant
+  namespace: konflux-ui-tenant
 spec:
   params:
     - name: git-url
