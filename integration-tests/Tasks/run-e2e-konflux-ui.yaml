@@ -31,27 +31,40 @@ spec:
       emptyDir: {}
   steps:
     - name: fix-smee-client
-      image: quay.io/konflux-ci/oras:latest
+      image: bitnami/kubectl:1.30
       workingDir: /workspace
       volumeMounts:
         - name: kubeconfig-data
           mountPath: /shared
+      env:
+        - name: TEKTON_PIPELINE_RUN
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.labels['tekton.dev/pipelineRun']
+        - name: TEKTON_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
       script: |
         #!/usr/bin/env bash
         set -euo pipefail
 
         echo "=== Getting PipelineRun name and kubeconfig ==="
 
-        # Get PipelineRun name from the TaskRun's owner reference or labels
-        PIPELINE_RUN_NAME=$(kubectl get taskrun $(context.taskRun.name) -o jsonpath='{.metadata.labels.tekton\.dev/pipelineRun}')
+        # Get PipelineRun name and namespace from environment variables set by Tekton
+        PIPELINE_RUN_NAME="${TEKTON_PIPELINE_RUN}"
+        NAMESPACE="${TEKTON_NAMESPACE}"
         echo "PipelineRun name: ${PIPELINE_RUN_NAME}"
+        echo "Namespace: ${NAMESPACE}"
 
         # Construct the secret name
         SECRET_NAME="kfg-${PIPELINE_RUN_NAME}"
         echo "Looking for secret: ${SECRET_NAME}"
 
-        # Extract kubeconfig from the secret
-        kubectl get secret ${SECRET_NAME} -o jsonpath='{.data.kubeconfig}' | base64 -d > /shared/kubeconfig
+        # Extract kubeconfig from the secret (this runs in Konflux cluster context)
+        kubectl get secret ${SECRET_NAME} -n ${NAMESPACE} -o jsonpath='{.data.kubeconfig}' | base64 -d > /shared/kubeconfig
+
+        # Switch to Kind cluster context
         export KUBECONFIG=/shared/kubeconfig
 
         echo "=== Extracting Konflux base URL from kubeconfig ==="
