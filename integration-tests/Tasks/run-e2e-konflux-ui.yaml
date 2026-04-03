@@ -27,7 +27,77 @@ spec:
     - name: dshm
       emptyDir:
         medium: Memory
+    - name: kubeconfig-data
+      emptyDir: {}
   steps:
+    - name: fix-smee-client
+      image: quay.io/konflux-ci/oras:latest
+      workingDir: /workspace
+      volumeMounts:
+        - name: kubeconfig-data
+          mountPath: /shared
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        echo "=== Getting PipelineRun name and kubeconfig ==="
+
+        # Get PipelineRun name from the TaskRun's owner reference or labels
+        PIPELINE_RUN_NAME=$(kubectl get taskrun $(context.taskRun.name) -o jsonpath='{.metadata.labels.tekton\.dev/pipelineRun}')
+        echo "PipelineRun name: ${PIPELINE_RUN_NAME}"
+
+        # Construct the secret name
+        SECRET_NAME="kfg-${PIPELINE_RUN_NAME}"
+        echo "Looking for secret: ${SECRET_NAME}"
+
+        # Extract kubeconfig from the secret
+        kubectl get secret ${SECRET_NAME} -o jsonpath='{.data.kubeconfig}' | base64 -d > /shared/kubeconfig
+        export KUBECONFIG=/shared/kubeconfig
+
+        echo "=== Extracting Konflux base URL from kubeconfig ==="
+
+        # Extract the server URL from kubeconfig
+        KUBE_SERVER=$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')
+        echo "Kubernetes API server: ${KUBE_SERVER}"
+
+        # Extract IP address (remove https:// prefix and :6443 port)
+        KUBE_IP=$(echo "${KUBE_SERVER}" | sed -E 's|https?://([^:]+):.*|\1|')
+        echo "Extracted IP: ${KUBE_IP}"
+
+        # Construct Konflux base URL with port 9443
+        CYPRESS_KONFLUX_BASE_URL="https://${KUBE_IP}:9443"
+        echo "Konflux base URL: ${CYPRESS_KONFLUX_BASE_URL}"
+
+        # Save to shared volume for next step
+        echo "${CYPRESS_KONFLUX_BASE_URL}" > /shared/base-url
+
+        echo "=== Fixing smee-client configuration ==="
+
+        # Fix smee-client target URL
+        echo "Updating smee-client target to pipelines-as-code-controller..."
+        kubectl set env deployment/gosmee-client \
+          -n smee-client \
+          GOSMEE_TARGET=http://pipelines-as-code-controller.pipelines-as-code.svc.cluster.local:8180
+
+        # Patch smee-client liveness probe to prevent premature pod kills
+        echo "Patching smee-client liveness probe configuration..."
+        kubectl patch deployment gosmee-client -n smee-client --type='json' -p='[
+          {"op": "replace", "path": "/spec/template/spec/containers/0/livenessProbe/failureThreshold", "value": 5},
+          {"op": "replace", "path": "/spec/template/spec/containers/0/livenessProbe/initialDelaySeconds", "value": 60},
+          {"op": "replace", "path": "/spec/template/spec/containers/0/livenessProbe/timeoutSeconds", "value": 30}
+        ]'
+
+        # Wait for smee-client to be ready
+        echo "Waiting for smee-client deployment to be ready..."
+        kubectl rollout status deployment/gosmee-client -n smee-client --timeout=5m
+
+        # Verify smee-client is running
+        SMEE_POD=$(kubectl get pod -n smee-client -l app=gosmee-client -o jsonpath='{.items[0].metadata.name}')
+        echo "smee-client pod: ${SMEE_POD}"
+        kubectl get pod ${SMEE_POD} -n smee-client
+
+        echo "smee-client is ready!"
+        echo "Setup complete. Ready for E2E tests."
     - name: run-e2e-test
       image: quay.io/konflux_ui_qe/konflux-ui-tests:latest
       workingDir: /tmp/e2e
@@ -41,6 +111,9 @@ spec:
       volumeMounts:
         - name: dshm
           mountPath: /dev/shm
+        - name: kubeconfig-data
+          mountPath: /shared
+          readOnly: true
       env:
         - name: CYPRESS_USERNAME
           valueFrom:
@@ -71,36 +144,10 @@ spec:
         #!/usr/bin/env bash
         set -euo pipefail
 
-        echo "=== Getting PipelineRun name and kubeconfig ==="
+        echo "=== Loading configuration from setup step ==="
 
-        # Get PipelineRun name from the TaskRun's owner reference or labels
-        PIPELINE_RUN_NAME=$(kubectl get taskrun $(context.taskRun.name) -o jsonpath='{.metadata.labels.tekton\.dev/pipelineRun}')
-        echo "PipelineRun name: ${PIPELINE_RUN_NAME}"
-
-        # Construct the secret name
-        SECRET_NAME="kfg-${PIPELINE_RUN_NAME}"
-        echo "Looking for secret: ${SECRET_NAME}"
-
-        # Extract kubeconfig from the secret
-        KUBECONFIG_CONTENT=$(kubectl get secret ${SECRET_NAME} -o jsonpath='{.data.kubeconfig}' | base64 -d)
-
-        # Write kubeconfig to a temporary file
-        mkdir -p /tmp/credentials
-        echo "${KUBECONFIG_CONTENT}" > /tmp/credentials/kubeconfig
-        export KUBECONFIG=/tmp/credentials/kubeconfig
-
-        echo "=== Extracting Konflux base URL from kubeconfig ==="
-
-        # Extract the server URL from kubeconfig
-        KUBE_SERVER=$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')
-        echo "Kubernetes API server: ${KUBE_SERVER}"
-
-        # Extract IP address (remove https:// prefix and :6443 port)
-        KUBE_IP=$(echo "${KUBE_SERVER}" | sed -E 's|https?://([^:]+):.*|\1|')
-        echo "Extracted IP: ${KUBE_IP}"
-
-        # Construct Konflux base URL with port 9443
-        export CYPRESS_KONFLUX_BASE_URL="https://${KUBE_IP}:9443"
+        # Read base URL from shared volume
+        export CYPRESS_KONFLUX_BASE_URL=$(cat /shared/base-url)
         echo "Konflux base URL: ${CYPRESS_KONFLUX_BASE_URL}"
 
         echo "=== Running E2E tests ==="
