@@ -191,6 +191,25 @@ spec:
           value: $(params.oci-credentials-secret)
         - name: build-credentials
           value: $(params.build-credentials-secret)
+    - name: monitor-webhook-logs
+      when:
+        - input: '$(tasks.konflux-ui-pr-metadata.results.pull-request-author)'
+          operator: notin
+          values: ['red-hat-konflux[bot]']
+      runAfter:
+        - deploy-konflux
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: https://github.com/testcara/konflux-ui-test
+          - name: revision
+            value: main
+          - name: pathInRepo
+            value: integration-tests/Tasks/monitor-webhook-logs.yaml
+      params:
+        - name: monitoring-duration
+          value: '15m'
     - name: run-e2e-konflux-ui
       when:
         - input: '$(tasks.konflux-ui-pr-metadata.results.pull-request-author)'
