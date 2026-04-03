@@ -50,10 +50,6 @@ spec:
     - name: build-credentials-secret
       type: string
       default: build-credentials
-    - name: cluster-kubeconfig-secret
-      description: 'Name of cluster kubeconfig secret. Use existing secret name when skip-provision=true, or leave empty for auto-generated name.'
-      default: ''
-      type: string
     - name: skip-provision
       description: 'Skip provisioning Kind cluster (use existing cluster for debugging)'
       default: 'false'
@@ -65,10 +61,6 @@ spec:
     - name: skip-deprovision
       description: 'Skip deprovisioning Kind cluster (keep cluster for debugging)'
       default: 'false'
-      type: string
-    - name: debug-pause-minutes
-      description: 'Minutes to pause for manual debugging after port-forward setup (0 to skip)'
-      default: '0'
       type: string
   tasks:
     - name: konflux-ui-pr-metadata
@@ -231,10 +223,6 @@ spec:
           value: $(params.slack-credentials-secret)
         - name: github-credentials-secret
           value: $(params.github-credentials-secret)
-        - name: cluster-access-secret
-          value: '$(params.cluster-kubeconfig-secret)'
-        - name: debug-pause-minutes
-          value: $(params.debug-pause-minutes)
         - name: oci-storage
           value: '$(params.e2e-artifacts-repo)'
         - name: oci-credentials-secret
@@ -243,8 +231,6 @@ spec:
           value: '$(tasks.konflux-ui-pr-metadata.results.job-spec)'
         - name: component-image
           value: '$(tasks.konflux-ui-pr-metadata.results.container-image)'
-        - name: cluster-access-secret-name
-          value: kfg-$(context.pipelineRun.name)
         - name: test-environment
           value: 'staging'
         - name: oci-ref
