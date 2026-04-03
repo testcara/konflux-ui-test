@@ -24,10 +24,6 @@ spec:
       type: string
       default: 'tests/basic-happy-path.spec.ts'
   volumes:
-    - name: kubeconfig
-      secret:
-        secretName: kfg-$(context.pipelineRun.name)
-        optional: true
     - name: dshm
       emptyDir:
         medium: Memory
@@ -43,14 +39,9 @@ spec:
           memory: 8Gi
           cpu: '1'
       volumeMounts:
-        - name: kubeconfig
-          mountPath: /credentials
-          readOnly: true
         - name: dshm
           mountPath: /dev/shm
       env:
-        - name: KUBECONFIG
-          value: /credentials/kubeconfig
         - name: CYPRESS_USERNAME
           valueFrom:
             secretKeyRef:
@@ -79,6 +70,24 @@ spec:
       script: |
         #!/usr/bin/env bash
         set -euo pipefail
+
+        echo "=== Getting PipelineRun name and kubeconfig ==="
+
+        # Get PipelineRun name from the TaskRun's owner reference or labels
+        PIPELINE_RUN_NAME=$(kubectl get taskrun $(context.taskRun.name) -o jsonpath='{.metadata.labels.tekton\.dev/pipelineRun}')
+        echo "PipelineRun name: ${PIPELINE_RUN_NAME}"
+
+        # Construct the secret name
+        SECRET_NAME="kfg-${PIPELINE_RUN_NAME}"
+        echo "Looking for secret: ${SECRET_NAME}"
+
+        # Extract kubeconfig from the secret
+        KUBECONFIG_CONTENT=$(kubectl get secret ${SECRET_NAME} -o jsonpath='{.data.kubeconfig}' | base64 -d)
+
+        # Write kubeconfig to a temporary file
+        mkdir -p /tmp/credentials
+        echo "${KUBECONFIG_CONTENT}" > /tmp/credentials/kubeconfig
+        export KUBECONFIG=/tmp/credentials/kubeconfig
 
         echo "=== Extracting Konflux base URL from kubeconfig ==="
 
