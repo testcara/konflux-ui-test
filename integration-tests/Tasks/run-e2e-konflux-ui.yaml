@@ -23,11 +23,19 @@ spec:
     - name: spec-file
       type: string
       default: 'tests/basic-happy-path.spec.ts'
+    - name: oci-storage
+      type: string
+      description: 'OCI repository to store test artifacts'
+    - name: oci-credentials-secret
+      type: string
+      description: 'Secret containing OCI registry credentials'
   volumes:
     - name: dshm
       emptyDir:
         medium: Memory
     - name: kubeconfig-data
+      emptyDir: {}
+    - name: test-artifacts
       emptyDir: {}
   steps:
     - name: fix-smee-client
@@ -126,6 +134,8 @@ spec:
         - name: kubeconfig-data
           mountPath: /shared
           readOnly: true
+        - name: test-artifacts
+          mountPath: /artifacts
       env:
         - name: CYPRESS_USERNAME
           valueFrom:
@@ -163,7 +173,88 @@ spec:
         echo "Konflux base URL: ${CYPRESS_KONFLUX_BASE_URL}"
 
         echo "=== Running E2E tests ==="
-        CYPRESS_GH_TOKEN=${CYPRESS_GH_TOKEN} CYPRESS_LOCAL_CLUSTER=true CYPRESS_KONFLUX_BASE_URL=${CYPRESS_KONFLUX_BASE_URL} yarn run cy:run
+        SPEC_FILE="$(params.spec-file)"
+        echo "Running test spec: ${SPEC_FILE}"
+
+        CYPRESS_GH_TOKEN=${CYPRESS_GH_TOKEN} CYPRESS_LOCAL_CLUSTER=true CYPRESS_KONFLUX_BASE_URL=${CYPRESS_KONFLUX_BASE_URL} yarn run cy:run --spec "${SPEC_FILE}"
         TEST_RESULT=$?
 
+        echo "=== Collecting test artifacts ==="
+        mkdir -p /artifacts
+
+        # Copy Cypress artifacts if they exist
+        if [ -d "cypress/videos" ]; then
+          echo "Copying videos..."
+          cp -r cypress/videos /artifacts/ || true
+        fi
+
+        if [ -d "cypress/screenshots" ]; then
+          echo "Copying screenshots..."
+          cp -r cypress/screenshots /artifacts/ || true
+        fi
+
+        # Copy test reports
+        if [ -f "cypress/results/junit.xml" ]; then
+          echo "Copying JUnit report..."
+          cp cypress/results/junit.xml /artifacts/e2e-report.xml || true
+        fi
+
+        # Create a simple test log
+        echo "Test execution completed with exit code: ${TEST_RESULT}" > /artifacts/e2e-tests.log
+        echo "Timestamp: $(date)" >> /artifacts/e2e-tests.log
+        echo "Base URL: ${CYPRESS_KONFLUX_BASE_URL}" >> /artifacts/e2e-tests.log
+
+        # List collected artifacts
+        echo "Artifacts collected:"
+        ls -lah /artifacts/
+
         exit $TEST_RESULT
+    - name: upload-artifacts
+      image: ghcr.io/oras-project/oras:v1.1.0
+      workingDir: /workspace
+      volumeMounts:
+        - name: test-artifacts
+          mountPath: /artifacts
+          readOnly: true
+        - name: kubeconfig-data
+          mountPath: /shared
+          readOnly: true
+      env:
+        - name: TEKTON_PIPELINE_RUN
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.labels['tekton.dev/pipelineRun']
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        echo "=== Uploading test artifacts to OCI registry ==="
+
+        PIPELINE_RUN_NAME="${TEKTON_PIPELINE_RUN}"
+        OCI_REPO="$(params.oci-storage)"
+
+        # Construct the full OCI reference
+        OCI_REF="${OCI_REPO}:${PIPELINE_RUN_NAME}"
+        echo "Uploading to: ${OCI_REF}"
+
+        # Check if there are any artifacts to upload
+        if [ -z "$(ls -A /artifacts)" ]; then
+          echo "⚠️  No artifacts found to upload"
+          exit 0
+        fi
+
+        echo "Artifacts to upload:"
+        ls -lah /artifacts/
+
+        # Upload artifacts using ORAS
+        cd /artifacts
+        oras push "${OCI_REF}" \
+          --annotation "org.opencontainers.image.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+          --annotation "org.opencontainers.image.title=E2E Test Artifacts" \
+          --annotation "pipeline.run=${PIPELINE_RUN_NAME}" \
+          ./:application/vnd.oci.image.layer.v1.tar+gzip
+
+        echo "✅ Artifacts uploaded successfully to ${OCI_REF}"
+        echo ""
+        echo "Download artifacts with:"
+        echo "  oras pull ${OCI_REF}"

@@ -62,6 +62,10 @@ spec:
       description: 'Skip deprovisioning Kind cluster (keep cluster for debugging)'
       default: 'false'
       type: string
+    - name: e2e-spec-file
+      description: 'Cypress test spec file to run (for debugging, run single test)'
+      default: 'tests/features.spec.ts'
+      type: string
   tasks:
     - name: konflux-ui-pr-metadata
       taskRef:
@@ -256,6 +260,8 @@ spec:
           value: $(params.oci-container-repo):$(context.pipelineRun.name)
         - name: oci-credentials
           value: quay-secret
+        - name: spec-file
+          value: $(params.e2e-spec-file)
 
   finally:
     - name: deprovision-kind-cluster
@@ -299,24 +305,16 @@ spec:
           - name: revision
             value: main
           - name: pathInRepo
-            value: tasks/pull-request-comment/0.1/pull-request-comment.yaml
+            value: tasks/pull-request-comment/0.2/pull-request-comment.yaml
       params:
         - name: test-name
           value: '$(context.pipelineRun.name)'
         - name: oci-container
-          value: '$(params.oci-container-repo):$(context.pipelineRun.name)'
+          value: '$(params.e2e-artifacts-repo):$(context.pipelineRun.name)'
+        - name: job-spec
+          value: '$(tasks.konflux-ui-pr-metadata.results.job-spec)'
         - name: pipeline-aggregate-status
           value: '$(tasks.status)'
-        - name: pull-request-author
-          value: '$(tasks.konflux-ui-pr-metadata.results.pull-request-author)'
-        - name: pull-request-number
-          value: '$(tasks.konflux-ui-pr-metadata.results.pull-request-number)'
-        - name: git-repo
-          value: '$(tasks.konflux-ui-pr-metadata.results.git-repo)'
-        - name: git-org
-          value: '$(tasks.konflux-ui-pr-metadata.results.git-org)'
-        - name: git-revision
-          value: '$(tasks.konflux-ui-pr-metadata.results.git-revision)'
         - name: junit-report-name
           value: e2e-report.xml
         - name: e2e-log-name
@@ -325,3 +323,5 @@ spec:
           value: cluster-provision.log
         - name: enable-test-results-analysis
           value: 'true'
+        - name: artifact-browser-url
+          value: '$(params.artifact-browser-url)'
