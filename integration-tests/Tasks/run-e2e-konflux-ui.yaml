@@ -36,6 +36,10 @@ spec:
     - name: oci-credentials-secret
       type: string
       description: 'Secret containing OCI registry credentials'
+    - name: oci-credentials
+      type: string
+      default: 'quay-secret'
+      description: 'Secret name for OCI registry authentication'
   volumes:
     - name: dshm
       emptyDir:
@@ -44,6 +48,10 @@ spec:
       emptyDir: {}
     - name: test-artifacts
       emptyDir: {}
+    - name: oci-credentials
+      secret:
+        secretName: $(params.oci-credentials)
+        optional: true
   steps:
     - name: fix-smee-client
       image: bitnami/kubectl:latest
@@ -143,6 +151,9 @@ spec:
           readOnly: true
         - name: test-artifacts
           mountPath: /artifacts
+        - name: oci-credentials
+          mountPath: /secrets/oci-credentials
+          readOnly: true
       env:
         - name: CYPRESS_USERNAME
           valueFrom:
@@ -169,9 +180,14 @@ spec:
             secretKeyRef:
               name: $(params.cypress-cloud-secret)
               key: record-key
+        - name: TEKTON_PIPELINE_RUN
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.labels['tekton.dev/pipelineRun']
       script: |
         #!/usr/bin/env bash
-        set -euo pipefail
+        # Note: NOT using 'set -e' so script continues after test failure
+        set -uo pipefail
 
         echo "=== Loading configuration from setup step ==="
 
@@ -183,8 +199,17 @@ spec:
         SPEC_FILE="$(params.spec-file)"
         echo "Running test spec: ${SPEC_FILE}"
 
+        # Run tests and capture exit code (don't exit on failure)
+        set +e
         CYPRESS_GH_TOKEN=${CYPRESS_GH_TOKEN} CYPRESS_LOCAL_CLUSTER=true CYPRESS_KONFLUX_BASE_URL=${CYPRESS_KONFLUX_BASE_URL} yarn run cy:run --spec "${SPEC_FILE}"
         TEST_RESULT=$?
+        set -e
+
+        echo ""
+        echo "=========================================="
+        echo "Test completed with exit code: ${TEST_RESULT}"
+        echo "=========================================="
+        echo ""
 
         echo "=== Collecting test artifacts ==="
         mkdir -p /artifacts
@@ -211,58 +236,90 @@ spec:
         echo "Timestamp: $(date)" >> /artifacts/e2e-tests.log
         echo "Base URL: ${CYPRESS_KONFLUX_BASE_URL}" >> /artifacts/e2e-tests.log
 
+        # Save test result for later steps
+        echo "${TEST_RESULT}" > /artifacts/test-exit-code
+
         # List collected artifacts
         echo "Artifacts collected:"
         ls -lah /artifacts/
 
-        exit $TEST_RESULT
-    - name: upload-artifacts
-      onError: continue
-      image: ghcr.io/oras-project/oras:v1.1.0
-      workingDir: /workspace
-      volumeMounts:
-        - name: test-artifacts
-          mountPath: /artifacts
-          readOnly: true
-        - name: kubeconfig-data
-          mountPath: /shared
-          readOnly: true
-      env:
-        - name: TEKTON_PIPELINE_RUN
-          valueFrom:
-            fieldRef:
-              fieldPath: metadata.labels['tekton.dev/pipelineRun']
-      script: |
-        #!/usr/bin/env sh
-        set -euo pipefail
+        # Don't exit with failure here - let upload-artifacts run first
+        if [ ${TEST_RESULT} -ne 0 ]; then
+          echo "⚠️  Tests failed with exit code: ${TEST_RESULT}"
+          echo "Continuing to upload artifacts..."
+        else
+          echo "✅ Tests passed"
+        fi
 
+        echo ""
         echo "=== Uploading test artifacts to OCI registry ==="
 
         PIPELINE_RUN_NAME="${TEKTON_PIPELINE_RUN}"
         OCI_REPO="$(params.oci-storage)"
-
-        # Construct the full OCI reference
         OCI_REF="${OCI_REPO}:${PIPELINE_RUN_NAME}"
+
         echo "Uploading to: ${OCI_REF}"
 
         # Check if there are any artifacts to upload
         if [ -z "$(ls -A /artifacts)" ]; then
           echo "⚠️  No artifacts found to upload"
-          exit 0
+        else
+          echo "Artifacts to upload:"
+          ls -lah /artifacts/
+
+          # Upload artifacts using ORAS (install oras first)
+          echo "Installing ORAS..."
+          cd /tmp
+          curl -LO https://github.com/oras-project/oras/releases/download/v1.1.0/oras_1.1.0_linux_amd64.tar.gz
+          tar -xzf oras_1.1.0_linux_amd64.tar.gz
+          chmod +x oras
+          ORAS_BIN=/tmp/oras
+
+          echo "Verifying ORAS installation..."
+          ${ORAS_BIN} version
+          echo "ORAS binary location: ${ORAS_BIN}"
+          ls -lh ${ORAS_BIN}
+
+          echo "Setting up authentication..."
+
+          # Check if OCI credentials secret is mounted
+          if [ -f /secrets/oci-credentials/.dockerconfigjson ]; then
+            echo "✓ Found OCI credentials secret"
+            mkdir -p ~/.docker
+            cp /secrets/oci-credentials/.dockerconfigjson ~/.docker/config.json
+            export DOCKER_CONFIG=~/.docker
+            echo "DOCKER_CONFIG=${DOCKER_CONFIG}"
+            echo "Docker config created successfully"
+          elif [ -f /tekton/home/.docker/config.json ]; then
+            echo "✓ Using Tekton Docker config"
+            export DOCKER_CONFIG=/tekton/home/.docker
+            echo "DOCKER_CONFIG=${DOCKER_CONFIG}"
+          else
+            echo "⚠️ No Docker config found"
+            echo "Available credential files:"
+            ls -la /secrets/oci-credentials/ 2>/dev/null || echo "  No OCI credentials mounted"
+            ls -la /tekton/home/.docker/ 2>/dev/null || echo "  No Tekton Docker config"
+          fi
+
+          echo "Uploading artifacts with ORAS..."
+          cd /artifacts
+          ${ORAS_BIN} push "${OCI_REF}" \
+            --annotation "org.opencontainers.image.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --annotation "org.opencontainers.image.title=E2E Test Artifacts" \
+            --annotation "pipeline.run=${PIPELINE_RUN_NAME}" \
+            ./:application/vnd.oci.image.layer.v1.tar+gzip || echo "⚠️ Failed to upload artifacts"
+
+          echo "✅ Artifacts uploaded successfully to ${OCI_REF}"
+          echo "Download artifacts with: oras pull ${OCI_REF}"
         fi
 
-        echo "Artifacts to upload:"
-        ls -lah /artifacts/
-
-        # Upload artifacts using ORAS
-        cd /artifacts
-        oras push "${OCI_REF}" \
-          --annotation "org.opencontainers.image.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-          --annotation "org.opencontainers.image.title=E2E Test Artifacts" \
-          --annotation "pipeline.run=${PIPELINE_RUN_NAME}" \
-          ./:application/vnd.oci.image.layer.v1.tar+gzip
-
-        echo "✅ Artifacts uploaded successfully to ${OCI_REF}"
+        # Now exit with the test result
         echo ""
-        echo "Download artifacts with:"
-        echo "  oras pull ${OCI_REF}"
+        echo "=== Final Result ==="
+        if [ ${TEST_RESULT} -ne 0 ]; then
+          echo "❌ E2E tests failed with exit code: ${TEST_RESULT}"
+          exit ${TEST_RESULT}
+        else
+          echo "✅ E2E tests passed"
+          exit 0
+        fi
