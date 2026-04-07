@@ -9,7 +9,7 @@ spec:
       type: string
   steps:
     - name: echo
-      image: alpine
+      image: registry.access.redhat.com/ubi9/ubi-minimal:latest
       env:
         - name: SNAPSHOT
           value: $(params.snapshot)
