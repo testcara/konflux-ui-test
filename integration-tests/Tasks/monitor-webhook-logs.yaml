@@ -17,7 +17,7 @@ spec:
       description: 'How long to monitor (e.g., 5m, 10m, 30m)'
   steps:
     - name: setup-monitoring
-      image: bitnami/kubectl:1.30
+      image: bitnami/kubectl:latest
       script: |
         #!/usr/bin/env bash
         set -euo pipefail
