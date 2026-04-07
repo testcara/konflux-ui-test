@@ -1,0 +1,123 @@
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: build-test-image
+  annotations:
+    tekton.dev/displayName: 'Build E2E Test Image'
+    tekton.dev/categories: 'Build'
+    tekton.dev/tags: 'build,e2e,docker'
+spec:
+  description: >-
+    Check if e2e-tests directory has changes and rebuild the test image if needed.
+    If no changes, use the default image from quay.io.
+  params:
+    - name: git-url
+      type: string
+      description: 'Git repository URL'
+    - name: git-revision
+      type: string
+      description: 'Git revision (commit SHA)'
+    - name: target-branch
+      type: string
+      default: 'main'
+      description: 'Target branch to compare against'
+    - name: pull-request-number
+      type: string
+      description: 'Pull request number'
+    - name: default-test-image
+      type: string
+      default: 'quay.io/konflux_ui_qe/konflux-ui-tests:latest'
+      description: 'Default test image to use if no changes detected'
+    - name: test-image-repo
+      type: string
+      default: 'quay.io/konflux_ui_qe/konflux-ui-tests'
+      description: 'Repository to push the built test image'
+    - name: quay-secret
+      type: string
+      default: 'quay-secret'
+      description: 'Secret containing Quay.io credentials'
+  results:
+    - name: test-image
+      description: 'The test image to use for E2E tests'
+  steps:
+    - name: check-and-build
+      image: quay.io/buildah/stable:latest
+      securityContext:
+        privileged: true
+      env:
+        - name: GIT_URL
+          value: $(params.git-url)
+        - name: GIT_REVISION
+          value: $(params.git-revision)
+        - name: TARGET_BRANCH
+          value: $(params.target-branch)
+        - name: PR_NUMBER
+          value: $(params.pull-request-number)
+        - name: DEFAULT_IMAGE
+          value: $(params.default-test-image)
+        - name: IMAGE_REPO
+          value: $(params.test-image-repo)
+      volumeMounts:
+        - name: varlibcontainers
+          mountPath: /var/lib/containers
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        echo "=== Checking for e2e-tests changes ==="
+
+        # Clone the repository
+        git clone "${GIT_URL}" /workspace/repo
+        cd /workspace/repo
+
+        # Checkout the PR commit
+        git fetch origin "${GIT_REVISION}"
+        git checkout "${GIT_REVISION}"
+
+        # Fetch target branch
+        git fetch origin "${TARGET_BRANCH}"
+
+        # Check if e2e-tests/ directory has changes
+        echo "Comparing with origin/${TARGET_BRANCH}..."
+
+        is_changed_cf=0
+        is_changed_ep=0
+        is_changed_other=0
+
+        git diff --exit-code --quiet "origin/${TARGET_BRANCH}" HEAD -- e2e-tests/Containerfile || is_changed_cf=$?
+        git diff --exit-code --quiet "origin/${TARGET_BRANCH}" HEAD -- e2e-tests/entrypoint.sh || is_changed_ep=$?
+        git diff --exit-code --quiet "origin/${TARGET_BRANCH}" HEAD -- e2e-tests/ || is_changed_other=$?
+
+        if [[ ($is_changed_cf -eq 1) || ($is_changed_ep -eq 1) || ($is_changed_other -eq 1) ]]; then
+          echo "✅ Changes detected in e2e-tests/ directory"
+          echo "  - Containerfile changed: $([ $is_changed_cf -eq 1 ] && echo 'Yes' || echo 'No')"
+          echo "  - entrypoint.sh changed: $([ $is_changed_ep -eq 1 ] && echo 'Yes' || echo 'No')"
+          echo "  - Other files changed: $([ $is_changed_other -eq 1 ] && echo 'Yes' || echo 'No')"
+
+          TEST_IMAGE="${IMAGE_REPO}:pr-${PR_NUMBER}"
+          echo ""
+          echo "=== Building new test image: ${TEST_IMAGE} ==="
+
+          cd e2e-tests
+
+          # Build image using buildah
+          buildah bud -t "${TEST_IMAGE}" -f Containerfile .
+
+          echo ""
+          echo "=== Pushing image to registry ==="
+          buildah push "${TEST_IMAGE}"
+
+          echo "✅ Successfully built and pushed: ${TEST_IMAGE}"
+          echo -n "${TEST_IMAGE}" > $(results.test-image.path)
+
+        else
+          echo "ℹ️  No changes detected in e2e-tests/ directory"
+          echo "Using default image: ${DEFAULT_IMAGE}"
+          echo -n "${DEFAULT_IMAGE}" > $(results.test-image.path)
+        fi
+
+        echo ""
+        echo "Final test image: $(cat $(results.test-image.path))"
+  volumes:
+    - name: varlibcontainers
+      emptyDir: {}
