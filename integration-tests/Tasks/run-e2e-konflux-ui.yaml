@@ -211,11 +211,20 @@ spec:
         echo "Timestamp: $(date)" >> /artifacts/e2e-tests.log
         echo "Base URL: ${CYPRESS_KONFLUX_BASE_URL}" >> /artifacts/e2e-tests.log
 
+        # Save test result for later steps
+        echo "${TEST_RESULT}" > /artifacts/test-exit-code
+
         # List collected artifacts
         echo "Artifacts collected:"
         ls -lah /artifacts/
 
-        exit $TEST_RESULT
+        # Don't exit with failure here - let upload-artifacts run first
+        if [ ${TEST_RESULT} -ne 0 ]; then
+          echo "⚠️  Tests failed with exit code: ${TEST_RESULT}"
+          echo "Continuing to upload artifacts..."
+        else
+          echo "✅ Tests passed"
+        fi
     - name: upload-artifacts
       onError: continue
       image: ghcr.io/oras-project/oras:v1.1.0
@@ -266,3 +275,30 @@ spec:
         echo ""
         echo "Download artifacts with:"
         echo "  oras pull ${OCI_REF}"
+    - name: check-test-result
+      image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+      volumeMounts:
+        - name: test-artifacts
+          mountPath: /artifacts
+          readOnly: true
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        echo "=== Checking final test result ==="
+
+        if [ -f /artifacts/test-exit-code ]; then
+          TEST_EXIT_CODE=$(cat /artifacts/test-exit-code)
+          echo "Test exit code: ${TEST_EXIT_CODE}"
+
+          if [ "${TEST_EXIT_CODE}" -ne 0 ]; then
+            echo "❌ E2E tests failed"
+            exit ${TEST_EXIT_CODE}
+          else
+            echo "✅ E2E tests passed"
+            exit 0
+          fi
+        else
+          echo "⚠️  Test exit code file not found, assuming failure"
+          exit 1
+        fi
