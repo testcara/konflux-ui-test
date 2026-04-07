@@ -14,9 +14,16 @@ spec:
     - name: job-type
       type: string
       default: 'pr-check'
+    - name: test-image
+      type: string
+      default: 'quay.io/konflux_ui_qe/konflux-ui-tests:latest'
+      description: 'Test image to use for E2E tests'
     - name: cypress-credentials-secret
       type: string
       default: 'cypress-credentials'
+    - name: cypress-cloud-secret
+      type: string
+      default: 'cypress-cloud-credentials'
     - name: github-credentials-secret
       type: string
       default: 'github-credentials'
@@ -119,7 +126,7 @@ spec:
         echo "smee-client is ready!"
         echo "Setup complete. Ready for E2E tests."
     - name: run-e2e-test
-      image: quay.io/konflux_ui_qe/konflux-ui-tests:latest
+      image: $(params.test-image)
       workingDir: /tmp/e2e
       resources:
         limits:
@@ -225,7 +232,7 @@ spec:
             fieldRef:
               fieldPath: metadata.labels['tekton.dev/pipelineRun']
       script: |
-        #!/usr/bin/env bash
+        #!/usr/bin/env sh
         set -euo pipefail
 
         echo "=== Uploading test artifacts to OCI registry ==="

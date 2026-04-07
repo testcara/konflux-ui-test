@@ -27,6 +27,10 @@ spec:
       description: 'URL to the artifact browser deployment. If provided, a link will be added to PR comments.'
       default: ''
       type: string
+    - name: console-url
+      description: 'Konflux/OpenShift console base URL'
+      default: 'https://console.redhat.com/preview/application-pipeline'
+      type: string
     - name: github-credentials-secret
       description: 'Secret name containing GitHub token'
       default: 'github-credentials'
@@ -195,6 +199,37 @@ spec:
           value: $(params.oci-credentials-secret)
         - name: build-credentials
           value: $(params.build-credentials-secret)
+    - name: build-test-image
+      when:
+        - input: '$(tasks.konflux-ui-pr-metadata.results.pull-request-author)'
+          operator: notin
+          values: ['red-hat-konflux[bot]']
+      runAfter:
+        - konflux-ui-pr-metadata
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: https://github.com/testcara/konflux-ui-test
+          - name: revision
+            value: main
+          - name: pathInRepo
+            value: integration-tests/Tasks/build-test-image.yaml
+      params:
+        - name: git-url
+          value: '$(tasks.konflux-ui-pr-metadata.results.git-url)'
+        - name: git-revision
+          value: '$(tasks.konflux-ui-pr-metadata.results.git-revision)'
+        - name: target-branch
+          value: '$(tasks.konflux-ui-pr-metadata.results.target-repo-branch)'
+        - name: pull-request-number
+          value: '$(tasks.konflux-ui-pr-metadata.results.pull-request-number)'
+        - name: default-test-image
+          value: 'quay.io/konflux_ui_qe/konflux-ui-tests:latest'
+        - name: test-image-repo
+          value: 'quay.io/konflux_ui_qe/konflux-ui-tests'
+        - name: quay-secret
+          value: $(params.oci-credentials-secret)
     - name: monitor-webhook-logs
       when:
         - input: '$(tasks.konflux-ui-pr-metadata.results.pull-request-author)'
@@ -222,6 +257,7 @@ spec:
       runAfter:
         - deploy-konflux
         - check-org-membership
+        - build-test-image
       taskRef:
         resolver: git
         params:
@@ -232,6 +268,8 @@ spec:
           - name: pathInRepo
             value: integration-tests/Tasks/run-e2e-konflux-ui.yaml
       params:
+        - name: test-image
+          value: '$(tasks.build-test-image.results.test-image)'
         - name: test-name
           value: '$(context.pipelineRun.name)'
         - name: git-repo
@@ -325,3 +363,32 @@ spec:
           value: 'true'
         - name: artifact-browser-url
           value: '$(params.artifact-browser-url)'
+        - name: konflux-test-infra-secret
+          value: $(params.konflux-test-infra-secret)
+    - name: send-slack-notification
+      when:
+        - input: '$(tasks.konflux-ui-pr-metadata.results.pull-request-author)'
+          operator: notin
+          values: ['red-hat-konflux[bot]']
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: https://github.com/testcara/konflux-ui-test
+          - name: revision
+            value: main
+          - name: pathInRepo
+            value: integration-tests/Tasks/send-slack-notification.yaml
+      params:
+        - name: pipeline-aggregate-status
+          value: '$(tasks.status)'
+        - name: test-name
+          value: '$(context.pipelineRun.name)'
+        - name: job-type
+          value: 'pr-check'
+        - name: suite
+          value: 'basic'
+        - name: slack-credentials-secret
+          value: $(params.slack-credentials-secret)
+        - name: console-url
+          value: $(params.console-url)
