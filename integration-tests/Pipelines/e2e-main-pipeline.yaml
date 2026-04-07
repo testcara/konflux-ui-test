@@ -205,7 +205,7 @@ spec:
           operator: notin
           values: ['red-hat-konflux[bot]']
       runAfter:
-        - konflux-ui-pr-metadata
+        - check-org-membership
       taskRef:
         resolver: git
         params:
@@ -230,6 +230,10 @@ spec:
           value: 'quay.io/konflux_ui_qe/konflux-ui-tests'
         - name: quay-secret
           value: $(params.oci-credentials-secret)
+      workspaces:
+        - name: dockerconfig
+          secret:
+            secretName: $(params.oci-credentials-secret)
     - name: monitor-webhook-logs
       when:
         - input: '$(tasks.konflux-ui-pr-metadata.results.pull-request-author)'

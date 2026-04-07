@@ -39,12 +39,21 @@ spec:
   results:
     - name: test-image
       description: 'The test image to use for E2E tests'
+  workspaces:
+    - name: dockerconfig
+      description: 'Docker config secret for registry authentication'
+      optional: true
+      mountPath: /tekton/home/.docker
   steps:
     - name: check-and-build
       image: quay.io/buildah/stable:latest
-      securityContext:
-        privileged: true
       env:
+        - name: STORAGE_DRIVER
+          value: vfs
+        - name: BUILDAH_ISOLATION
+          value: chroot
+        - name: BUILDAH_FORMAT
+          value: oci
         - name: GIT_URL
           value: $(params.git-url)
         - name: GIT_REVISION
@@ -63,6 +72,22 @@ spec:
       script: |
         #!/usr/bin/env bash
         set -euo pipefail
+
+        echo "=== Setting up buildah for rootless mode ==="
+        # Configure buildah to use VFS storage driver (required for rootless)
+        mkdir -p ~/.config/containers
+        cat > ~/.config/containers/storage.conf <<EOF
+[storage]
+driver = "vfs"
+EOF
+
+        # Set up authentication if docker config exists
+        if [ -f /tekton/home/.docker/config.json ]; then
+          echo "Using Docker config for authentication"
+          export REGISTRY_AUTH_FILE=/tekton/home/.docker/config.json
+        else
+          echo "Warning: No Docker config found, proceeding without authentication"
+        fi
 
         echo "=== Checking for e2e-tests changes ==="
 
