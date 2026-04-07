@@ -250,7 +250,7 @@ spec:
             value: integration-tests/Tasks/monitor-webhook-logs.yaml
       params:
         - name: monitoring-duration
-          value: '15m'
+          value: '10m'
     - name: run-e2e-konflux-ui
       when:
         - input: '$(tasks.konflux-ui-pr-metadata.results.pull-request-author)'

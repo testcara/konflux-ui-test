@@ -217,6 +217,7 @@ spec:
 
         exit $TEST_RESULT
     - name: upload-artifacts
+      onError: continue
       image: ghcr.io/oras-project/oras:v1.1.0
       workingDir: /workspace
       volumeMounts:
