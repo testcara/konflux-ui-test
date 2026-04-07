@@ -32,6 +32,10 @@ spec:
       type: string
       default: 'quay.io/konflux_ui_qe/konflux-ui-tests'
       description: 'Repository to push the built test image'
+    - name: pr-test-image
+      type: string
+      default: ''
+      description: 'PR-specific test image (if exists from Konflux build)'
     - name: quay-secret
       type: string
       default: 'quay-secret'
@@ -45,104 +49,37 @@ spec:
       optional: true
       mountPath: /tekton/home/.docker
   steps:
-    - name: check-and-build
-      image: quay.io/buildah/stable:latest
+    - name: select-test-image
+      image: quay.io/skopeo/stable:latest
       env:
-        - name: STORAGE_DRIVER
-          value: vfs
-        - name: BUILDAH_ISOLATION
-          value: chroot
-        - name: BUILDAH_FORMAT
-          value: oci
-        - name: GIT_URL
-          value: $(params.git-url)
-        - name: GIT_REVISION
-          value: $(params.git-revision)
-        - name: TARGET_BRANCH
-          value: $(params.target-branch)
-        - name: PR_NUMBER
-          value: $(params.pull-request-number)
+        - name: PR_TEST_IMAGE
+          value: $(params.pr-test-image)
         - name: DEFAULT_IMAGE
           value: $(params.default-test-image)
-        - name: IMAGE_REPO
-          value: $(params.test-image-repo)
-      volumeMounts:
-        - name: varlibcontainers
-          mountPath: /var/lib/containers
       script: |
         #!/usr/bin/env bash
         set -euo pipefail
 
-        echo "=== Setting up buildah for rootless mode ==="
-        # Configure buildah to use VFS storage driver (required for rootless)
-        mkdir -p ~/.config/containers
-        cat > ~/.config/containers/storage.conf <<EOF
-[storage]
-driver = "vfs"
-EOF
+        echo "=== Selecting test image for E2E tests ==="
 
-        # Set up authentication if docker config exists
-        if [ -f /tekton/home/.docker/config.json ]; then
-          echo "Using Docker config for authentication"
-          export REGISTRY_AUTH_FILE=/tekton/home/.docker/config.json
+        # Check if PR-specific image exists
+        if [ -n "${PR_TEST_IMAGE}" ]; then
+          echo "Checking if PR-specific image exists: ${PR_TEST_IMAGE}"
+
+          # Try to inspect the image (will fail if it doesn't exist)
+          if skopeo inspect --no-tags "docker://${PR_TEST_IMAGE}" > /dev/null 2>&1; then
+            echo "✅ PR-specific test image found: ${PR_TEST_IMAGE}"
+            echo "This image was built by Konflux when e2e-tests/ changes were detected"
+            echo -n "${PR_TEST_IMAGE}" > $(results.test-image.path)
+          else
+            echo "ℹ️  PR-specific image not found (probably no e2e-tests/ changes)"
+            echo "Using default image: ${DEFAULT_IMAGE}"
+            echo -n "${DEFAULT_IMAGE}" > $(results.test-image.path)
+          fi
         else
-          echo "Warning: No Docker config found, proceeding without authentication"
-        fi
-
-        echo "=== Checking for e2e-tests changes ==="
-
-        # Clone the repository
-        git clone "${GIT_URL}" /workspace/repo
-        cd /workspace/repo
-
-        # Checkout the PR commit
-        git fetch origin "${GIT_REVISION}"
-        git checkout "${GIT_REVISION}"
-
-        # Fetch target branch
-        git fetch origin "${TARGET_BRANCH}"
-
-        # Check if e2e-tests/ directory has changes
-        echo "Comparing with origin/${TARGET_BRANCH}..."
-
-        is_changed_cf=0
-        is_changed_ep=0
-        is_changed_other=0
-
-        git diff --exit-code --quiet "origin/${TARGET_BRANCH}" HEAD -- e2e-tests/Containerfile || is_changed_cf=$?
-        git diff --exit-code --quiet "origin/${TARGET_BRANCH}" HEAD -- e2e-tests/entrypoint.sh || is_changed_ep=$?
-        git diff --exit-code --quiet "origin/${TARGET_BRANCH}" HEAD -- e2e-tests/ || is_changed_other=$?
-
-        if [[ ($is_changed_cf -eq 1) || ($is_changed_ep -eq 1) || ($is_changed_other -eq 1) ]]; then
-          echo "✅ Changes detected in e2e-tests/ directory"
-          echo "  - Containerfile changed: $([ $is_changed_cf -eq 1 ] && echo 'Yes' || echo 'No')"
-          echo "  - entrypoint.sh changed: $([ $is_changed_ep -eq 1 ] && echo 'Yes' || echo 'No')"
-          echo "  - Other files changed: $([ $is_changed_other -eq 1 ] && echo 'Yes' || echo 'No')"
-
-          TEST_IMAGE="${IMAGE_REPO}:pr-${PR_NUMBER}"
-          echo ""
-          echo "=== Building new test image: ${TEST_IMAGE} ==="
-
-          cd e2e-tests
-
-          # Build image using buildah
-          buildah bud -t "${TEST_IMAGE}" -f Containerfile .
-
-          echo ""
-          echo "=== Pushing image to registry ==="
-          buildah push "${TEST_IMAGE}"
-
-          echo "✅ Successfully built and pushed: ${TEST_IMAGE}"
-          echo -n "${TEST_IMAGE}" > $(results.test-image.path)
-
-        else
-          echo "ℹ️  No changes detected in e2e-tests/ directory"
-          echo "Using default image: ${DEFAULT_IMAGE}"
+          echo "ℹ️  No PR number provided, using default image: ${DEFAULT_IMAGE}"
           echo -n "${DEFAULT_IMAGE}" > $(results.test-image.path)
         fi
 
         echo ""
-        echo "Final test image: $(cat $(results.test-image.path))"
-  volumes:
-    - name: varlibcontainers
-      emptyDir: {}
+        echo "📦 Final test image selected: $(cat $(results.test-image.path))"
