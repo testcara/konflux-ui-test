@@ -42,73 +42,86 @@ spec:
 
         echo "=== Starting log monitoring ==="
         echo "Monitoring duration: $(params.monitoring-duration)"
+        echo "Poll interval: 2 minutes"
         echo "=========================================="
 
-        # Function to stream logs with timestamps
-        monitor_logs() {
-          local namespace=$1
-          local label=$2
-          local component=$3
-
-          echo ""
-          echo "### Monitoring ${component} ###"
-
-          # Get pod name
-          POD=$(kubectl get pod -n ${namespace} -l ${label} -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
-
-          if [[ -z "${POD}" ]]; then
-            echo "⚠️  No pod found for ${component}"
-            return
-          fi
-
-          echo "Pod: ${POD}"
-
-          # Follow logs in background
-          kubectl logs -n ${namespace} ${POD} -f --tail=50 --timestamps 2>&1 | while read line; do
-            echo "[${component}] ${line}"
-          done &
-        }
-
-        # Monitor smee-client
-        monitor_logs "smee-client" "app=gosmee-client" "SMEE-CLIENT"
-
-        # Monitor pipelines-as-code controller
-        monitor_logs "pipelines-as-code" "app.kubernetes.io/name=controller" "PAC-CONTROLLER"
-
-        echo ""
-        echo "=========================================="
-        echo "✓ Log monitoring started"
-        echo "Logs will stream for $(params.monitoring-duration)"
-        echo "=========================================="
-        echo ""
-
-        # Keep monitoring for the specified duration
+        # Parse monitoring duration
         DURATION=$(params.monitoring-duration)
-        SECONDS=${DURATION//[!0-9]/}
-        UNIT=${DURATION//[0-9]/}
+        DURATION_NUM=${DURATION//[!0-9]/}
+        DURATION_UNIT=${DURATION//[0-9]/}
 
-        case ${UNIT} in
+        case ${DURATION_UNIT} in
           m|M)
-            SLEEP_TIME=$((SECONDS * 60))
+            TOTAL_SECONDS=$((DURATION_NUM * 60))
             ;;
           s|S)
-            SLEEP_TIME=${SECONDS}
+            TOTAL_SECONDS=${DURATION_NUM}
             ;;
           h|H)
-            SLEEP_TIME=$((SECONDS * 3600))
+            TOTAL_SECONDS=$((DURATION_NUM * 3600))
             ;;
           *)
-            echo "Unknown time unit: ${UNIT}, defaulting to minutes"
-            SLEEP_TIME=$((SECONDS * 60))
+            echo "Unknown time unit: ${DURATION_UNIT}, defaulting to minutes"
+            TOTAL_SECONDS=$((DURATION_NUM * 60))
             ;;
         esac
 
-        echo "Sleeping for ${SLEEP_TIME} seconds..."
-        sleep ${SLEEP_TIME}
+        echo "Total monitoring time: ${TOTAL_SECONDS} seconds"
+        echo ""
+
+        # Poll interval: 2 minutes
+        POLL_INTERVAL=120
+        ELAPSED=0
+        ITERATION=1
+
+        while [ ${ELAPSED} -lt ${TOTAL_SECONDS} ]; do
+          echo "=========================================="
+          echo "=== Poll #${ITERATION} - $(date '+%Y-%m-%d %H:%M:%S') ==="
+          echo "=========================================="
+
+          # Get smee-client logs
+          echo ""
+          echo "### SMEE-CLIENT Logs (last 30 lines) ###"
+          SMEE_POD=$(kubectl get pod -n smee-client -l app=gosmee-client -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+          if [[ -n "${SMEE_POD}" ]]; then
+            echo "Pod: ${SMEE_POD}"
+            kubectl logs -n smee-client ${SMEE_POD} --tail=30 --timestamps 2>&1 | sed 's/^/[SMEE] /'
+          else
+            echo "⚠️  No smee-client pod found"
+          fi
+
+          # Get pipelines-as-code controller logs
+          echo ""
+          echo "### PIPELINES-AS-CODE Controller Logs (last 30 lines) ###"
+          PAC_POD=$(kubectl get pod -n pipelines-as-code -l app.kubernetes.io/name=controller -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+          if [[ -n "${PAC_POD}" ]]; then
+            echo "Pod: ${PAC_POD}"
+            kubectl logs -n pipelines-as-code ${PAC_POD} --tail=30 --timestamps 2>&1 | sed 's/^/[PAC] /'
+          else
+            echo "⚠️  No pipelines-as-code controller pod found"
+          fi
+
+          echo ""
+          echo "=========================================="
+
+          # Sleep for 2 minutes unless we're done
+          REMAINING=$((TOTAL_SECONDS - ELAPSED))
+          if [ ${REMAINING} -gt ${POLL_INTERVAL} ]; then
+            echo "Next poll in ${POLL_INTERVAL} seconds..."
+            sleep ${POLL_INTERVAL}
+            ELAPSED=$((ELAPSED + POLL_INTERVAL))
+          else
+            echo "Final wait for ${REMAINING} seconds..."
+            sleep ${REMAINING}
+            ELAPSED=${TOTAL_SECONDS}
+          fi
+
+          ITERATION=$((ITERATION + 1))
+        done
 
         echo ""
         echo "=========================================="
-        echo "✓ Monitoring complete"
+        echo "✓ Monitoring complete after ${ITERATION} polls"
         echo "=========================================="
       env:
         - name: TEKTON_PIPELINE_RUN

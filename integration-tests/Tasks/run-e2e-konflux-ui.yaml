@@ -86,15 +86,14 @@ spec:
 
         echo "=== Fixing smee-client configuration ==="
 
-        # Fix smee-client target URL
-        echo "Updating smee-client target to pipelines-as-code-controller..."
-        kubectl set env deployment/gosmee-client \
-          -n smee-client \
-          GOSMEE_TARGET=http://pipelines-as-code-controller.pipelines-as-code.svc.cluster.local:8180
+        # Get the current smee.io URL from the deployment
+        SMEE_URL=$(kubectl get deployment gosmee-client -n smee-client -o jsonpath='{.spec.template.spec.containers[0].args[1]}')
+        echo "Current smee.io URL: ${SMEE_URL}"
 
-        # Patch smee-client liveness probe to prevent premature pod kills
-        echo "Patching smee-client liveness probe configuration..."
+        # Fix smee-client by patching args and liveness probe
+        echo "Updating smee-client deployment..."
         kubectl patch deployment gosmee-client -n smee-client --type='json' -p='[
+          {"op": "replace", "path": "/spec/template/spec/containers/0/args", "value": ["client", "'"${SMEE_URL}"'", "http://pipelines-as-code-controller.pipelines-as-code.svc.cluster.local:8180"]},
           {"op": "replace", "path": "/spec/template/spec/containers/0/livenessProbe/failureThreshold", "value": 5},
           {"op": "replace", "path": "/spec/template/spec/containers/0/livenessProbe/initialDelaySeconds", "value": 60},
           {"op": "replace", "path": "/spec/template/spec/containers/0/livenessProbe/timeoutSeconds", "value": 30}
