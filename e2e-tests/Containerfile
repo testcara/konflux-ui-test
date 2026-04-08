@@ -10,7 +10,6 @@ RUN wget "https://github.com/sigstore/cosign/releases/download/v3.0.4/cosign-lin
 
 USER node:0
 
-# test
 COPY --chown=node:root --chmod=775 . /tmp/e2e
 RUN chmod -R 775 /tmp/e2e
 
