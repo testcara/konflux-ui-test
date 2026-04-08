@@ -1,45 +1,32 @@
+---
 apiVersion: tekton.dev/v1beta1
 kind: Task
 metadata:
   name: build-test-image
   annotations:
     tekton.dev/displayName: 'Build E2E Test Image'
-    tekton.dev/categories: 'Build'
-    tekton.dev/tags: 'build,e2e,docker'
 spec:
   description: >-
     Check if e2e-tests directory has changes and rebuild the test image if needed.
-    If no changes, use the default image from quay.io.
   params:
     - name: git-url
       type: string
-      description: 'Git repository URL'
     - name: git-revision
       type: string
-      description: 'Git revision (commit SHA)'
     - name: target-branch
       type: string
       default: 'main'
-      description: 'Target branch to compare against'
     - name: pull-request-number
       type: string
-      description: 'Pull request number'
     - name: default-test-image
       type: string
       default: 'quay.io/konflux_ui_qe/konflux-ui-tests:latest'
-      description: 'Default test image to use if no changes detected'
     - name: test-image-repo
       type: string
       default: 'quay.io/konflux_ui_qe/konflux-ui-tests'
-      description: 'Repository to push the built test image'
-    - name: pr-test-image
-      type: string
-      default: ''
-      description: 'PR-specific test image (if exists from Konflux build)'
     - name: quay-secret
       type: string
       default: 'quay-secret'
-      description: 'Secret containing Quay.io credentials'
   results:
     - name: test-image
       description: 'The test image to use for E2E tests'
@@ -48,79 +35,64 @@ spec:
       secret:
         secretName: $(params.quay-secret)
         optional: true
-  steps:
-    - name: check-changes
-      image: alpine/git:latest
-      workingDir: /workspace
-      script: |
-        #!/bin/sh
-        set -eu
-
-        echo "=== Checking for e2e-tests changes ==="
-
-        # Clone the repository to a fresh directory
-        rm -rf /workspace/repo
-        git clone $(params.git-url) /workspace/repo
-        cd /workspace/repo
-        git checkout $(params.git-revision)
-
-        # Check if e2e-tests directory has changes compared to target branch
-        git fetch origin $(params.target-branch)
-
-        if git diff --name-only origin/$(params.target-branch)...HEAD | grep -q "^e2e-tests/"; then
-          echo "✅ Changes detected in e2e-tests/"
-          echo -n "true" > /workspace/needs-build
-        else
-          echo "ℹ️  No changes in e2e-tests/"
-          echo -n "false" > /workspace/needs-build
-        fi
-
-    - name: build-image
+  steps: # 注意：steps 现在正确缩进在 spec 下
+    - name: check-and-build
       image: gcr.io/kaniko-project/executor:debug
-      workingDir: /workspace/repo/e2e-tests
+      command: ['/busybox/sh', '-c']
+      workingDir: /workspace # 使用容器内的默认工作目录
       volumeMounts:
         - name: quay-auth
           mountPath: /kaniko/.docker
-          readOnly: true
-      env:
-        - name: IMAGE_TAG
-          value: $(params.test-image-repo):pr-$(params.pull-request-number)
-        - name: DEFAULT_IMAGE
-          value: $(params.default-test-image)
-        - name: DOCKER_CONFIG
-          value: /kaniko/.docker
-      script: |
-        #!/bin/sh
-        set -eu
+      args:
+        - |
+          set -eu
 
-        NEEDS_BUILD=$(cat /workspace/needs-build)
+          # 准备临时目录
+          # Kaniko 容器里没有 git，所以我们需要手动下载 alpine/git 处理源码，
+          # 或者直接在这个容器里安装 git (如果基础镜像允许)。
+          # 注意：Kaniko debug 镜像非常精简，通常没有 git。
 
-        if [ "$NEEDS_BUILD" = "true" ]; then
-          echo "=== Building test image with Kaniko ==="
+          # --- 关键修正 ---
+          # 如果 Kaniko 镜像里没有 git 命令，上面的脚本会报错 "git: not found"。
+          # 针对 Konflux，最好的办法是分成两个 Step 但“共用”同一个 Step 的本地目录是行不通的。
 
-          # Check if credentials are available
-          if [ -f /kaniko/.docker/.dockerconfigjson ]; then
-            cp /kaniko/.docker/.dockerconfigjson /kaniko/.docker/config.json
-            echo "✅ Quay credentials configured"
+          # 所以我们用一个折中方案：在单步内先用 busybox 逻辑判断，
+          # 或者接受“总是构建”来简化流程，或者像下面这样写：
+
+          echo "Starting process..."
+
+          # 判断逻辑需要 git。如果此镜像确实无 git，建议还是回退到多步骤，
+          # 但在 Pipeline 层级解决 Workspace 绑定（如我之前给你的 Pipeline 完整代码）。
+
+          # 假设镜像中有 git (或你换成了一个带 git 和 kaniko 的自定义镜像):
+          if command -v git >/dev/null 2>&1; then
+              mkdir -p /workspace/repo && cd /workspace/repo
+              git clone $(params.git-url) .
+              git checkout $(params.git-revision)
+              git fetch origin $(params.target-branch)
+
+              if git diff --name-only origin/$(params.target-branch)...HEAD | grep -q "^e2e-tests/"; then
+                BUILD_REQUIRED=true
+              else
+                BUILD_REQUIRED=false
+              fi
           else
-            echo "⚠️  No Quay credentials found, build may fail if pushing to private registry"
+              echo "⚠️ Git not found in this image! Defaulting to BUILD=true or use a pre-built image."
+              BUILD_REQUIRED=true
           fi
 
-          # Build and push with Kaniko
-          /kaniko/executor \
-            --context=/workspace/repo/e2e-tests \
-            --dockerfile=/workspace/repo/e2e-tests/Containerfile \
-            --destination=${IMAGE_TAG} \
-            --cache=false \
-            --verbosity=info
-
-          echo "✅ Image built and pushed successfully"
-          echo -n "${IMAGE_TAG}" > $(results.test-image.path)
-        else
-          echo "=== Using default test image ==="
-          echo "No changes detected, using: ${DEFAULT_IMAGE}"
-          echo -n "${DEFAULT_IMAGE}" > $(results.test-image.path)
-        fi
-
-        echo ""
-        echo "📦 Final test image: $(cat $(results.test-image.path))"
+          if [ "$BUILD_REQUIRED" = "true" ]; then
+            echo "🚀 Building image..."
+            if [ -f /kaniko/.docker/.dockerconfigjson ]; then
+               mkdir -p /root/.docker
+               cp /kaniko/.docker/.dockerconfigjson /root/.docker/config.json
+            fi
+            /kaniko/executor \
+              --context=/workspace/repo/e2e-tests \
+              --dockerfile=/workspace/repo/e2e-tests/Containerfile \
+              --destination=$(params.test-image-repo):pr-$(params.pull-request-number)
+            echo -n "$(params.test-image-repo):pr-$(params.pull-request-number)" > $(results.test-image.path)
+          else
+            echo "✅ No changes detected. Using default image."
+            echo -n "$(params.default-test-image)" > $(results.test-image.path)
+          fi

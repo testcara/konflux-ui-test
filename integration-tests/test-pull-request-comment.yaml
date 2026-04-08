@@ -1,0 +1,50 @@
+---
+apiVersion: tekton.dev/v1beta1
+kind: TaskRun
+metadata:
+  generateName: test-pull-request-comment-
+  namespace: wlin-tenant
+spec:
+  taskRef:
+    resolver: git
+    params:
+      - name: url
+        value: https://github.com/konflux-ci/tekton-integration-catalog.git
+      - name: revision
+        value: main
+      - name: pathInRepo
+        value: tasks/pull-request-comment/0.2/pull-request-comment.yaml
+  params:
+    - name: test-name
+      value: 'test-pr-comment-run'
+    - name: oci-container
+      value: 'quay.io/konflux_ui_qe/pr-check-artefacts:konflux-ui-e2e-b7rqs'
+    - name: job-spec
+      value: |
+        {
+          "container_image": "quay.io/test/image:latest",
+          "konflux_component": "konflux-ui",
+          "git": {
+            "pull_request_number": 123,
+            "pull_request_author": "testcara",
+            "org": "konflux-ci",
+            "repo": "konflux-ui",
+            "commit_sha": "abc123",
+            "event_type": "pull_request",
+            "source_repo_url": "https://github.com/testcara/konflux-ui",
+            "source_repo_branch": "test-branch",
+            "target_repo_branch": "main"
+          }
+        }
+    - name: pipeline-aggregate-status
+      value: 'Failed'
+    - name: junit-report-name
+      value: 'e2e-report.xml'
+    - name: e2e-log-name
+      value: 'e2e-tests.log'
+    - name: cluster-provision-log-name
+      value: 'cluster-provision.log'
+    - name: enable-test-results-analysis
+      value: 'true'
+    - name: artifact-browser-url
+      value: ''
