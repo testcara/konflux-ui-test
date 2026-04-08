@@ -159,8 +159,8 @@ spec:
             "git": {
                 "pull_request_number": $PR_NUMBER_JSON,
                 "pull_request_author": $PR_AUTHOR_JSON,
-                "git_org": "$GIT_ORGANIZATION",
-                "git_repo": "$GIT_REPOSITORY",
+                "org": "$GIT_ORGANIZATION",
+                "repo": "$GIT_REPOSITORY",
                 "commit_sha": "$GIT_REVISION",
                 "event_type": "$EVENT_TYPE",
                 "source_repo_url": "$SOURCE_REPO_URL",

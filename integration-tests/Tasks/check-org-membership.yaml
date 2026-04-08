@@ -55,7 +55,7 @@ spec:
         WHITELISTED_BOT_NAME=("red-hat-konflux[bot]" "konflux-staging[bot]")
         REQUIRED_LABEL_NAME="ok-to-test"
 
-        ORG=$(jq -r '.git.git_org // "unknown"' <<< "$JOB_SPEC")
+        ORG=$(jq -r '.git.org // "unknown"' <<< "$JOB_SPEC")
 
         for bot in "${WHITELISTED_BOT_NAME[@]}"; do
           if [[ "$bot" == "$PR_AUTHOR" ]]; then

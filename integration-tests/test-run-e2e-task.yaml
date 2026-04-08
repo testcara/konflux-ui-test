@@ -23,8 +23,8 @@ spec:
           "git": {
             "pull_request_number": null,
             "pull_request_author": null,
-            "git_org": "testcara",
-            "git_repo": "konflux-ui-test",
+            "org": "testcara",
+            "repo": "konflux-ui-test",
             "commit_sha": "f1be336",
             "event_type": "push",
             "source_repo_url": "https://github.com/testcara/konflux-ui-test",
