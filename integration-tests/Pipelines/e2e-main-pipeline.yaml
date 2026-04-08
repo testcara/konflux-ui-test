@@ -74,6 +74,9 @@ spec:
       description: 'Cypress test spec file to run (for debugging, run single test)'
       default: 'tests/features.spec.ts'
       type: string
+  workspaces:
+    - name: shared-data
+      optional: true
   tasks:
     - name: konflux-ui-pr-metadata
       taskRef:
