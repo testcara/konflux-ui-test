@@ -76,26 +76,30 @@ spec:
         fi
 
     - name: build-with-kaniko
-      image: gcr.io/kaniko-project/executor:v1.23.0
+      image: gcr.io/kaniko-project/executor:debug
       volumeMounts:
         - name: quay-auth
-          mountPath: /kaniko/.docker
+          mountPath: /secrets/quay
           readOnly: true
-      env:
-        - name: DOCKER_CONFIG
-          value: /kaniko/.docker
-      script: |
-        #!/busybox/sh
-        set -eu
+      command:
+        - /bin/sh
+      args:
+        - -c
+        - |
+          BUILD_NEEDED=$(cat /workspace/build-needed)
 
-        BUILD_NEEDED=$(cat /workspace/build-needed)
+          if [ "$BUILD_NEEDED" = "false" ]; then
+            echo "⏭️  Skipping build (no changes in e2e-tests/)"
+            echo "    Using default image: $(params.default-test-image)"
+            exit 0
+          fi
 
-        if [ "$BUILD_NEEDED" = "true" ]; then
           echo "=== Building test image with Kaniko ==="
 
-          # Setup authentication
-          if [ -f /kaniko/.docker/.dockerconfigjson ]; then
-            cp /kaniko/.docker/.dockerconfigjson /kaniko/.docker/config.json
+          # Prepare authentication
+          mkdir -p /kaniko/.docker
+          if [ -f /secrets/quay/.dockerconfigjson ]; then
+            cp /secrets/quay/.dockerconfigjson /kaniko/.docker/config.json
             echo "✅ Quay credentials configured"
           fi
 
@@ -108,10 +112,7 @@ spec:
             --verbosity=info
 
           echo -n "$(params.test-image-repo):pr-$(params.pull-request-number)" > $(results.test-image.path)
-          echo "✅ Image built and pushed: $(params.test-image-repo):pr-$(params.pull-request-number)"
-        else
-          echo "⏭️  Skipping build, using default image"
-        fi
+          echo "✅ Image built and pushed"
 
     - name: show-result
       image: alpine:latest
