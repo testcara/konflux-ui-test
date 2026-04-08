@@ -75,12 +75,35 @@ spec:
           echo -n "$(params.default-test-image)" > $(results.test-image.path)
         fi
 
-    - name: build-with-kaniko
-      image: gcr.io/kaniko-project/executor:v1.23.0
+    - name: prepare-auth
+      image: alpine:latest
       volumeMounts:
         - name: quay-auth
-          mountPath: /kaniko/.docker
+          mountPath: /secrets/quay
           readOnly: true
+      script: |
+        #!/bin/sh
+        set -eu
+
+        BUILD_NEEDED=$(cat /workspace/build-needed)
+
+        if [ "$BUILD_NEEDED" = "true" ]; then
+          echo "=== Preparing Kaniko authentication ==="
+          mkdir -p /kaniko/.docker
+          if [ -f /secrets/quay/.dockerconfigjson ]; then
+            cp /secrets/quay/.dockerconfigjson /kaniko/.docker/config.json
+            echo "✅ Quay credentials configured"
+          else
+            echo "⚠️  No credentials found, will try anonymous push"
+          fi
+          echo "ready" > /workspace/auth-ready
+        else
+          echo "⏭️  Skipping build preparation"
+          echo "skip" > /workspace/auth-ready
+        fi
+
+    - name: build-with-kaniko
+      image: gcr.io/kaniko-project/executor:v1.23.0
       env:
         - name: DOCKER_CONFIG
           value: /kaniko/.docker
@@ -92,25 +115,16 @@ spec:
 
         if [ "$BUILD_NEEDED" = "true" ]; then
           echo "=== Building test image with Kaniko ==="
-
-          # Setup authentication
-          if [ -f /kaniko/.docker/.dockerconfigjson ]; then
-            cp /kaniko/.docker/.dockerconfigjson /kaniko/.docker/config.json
-            echo "✅ Quay credentials configured"
-          fi
-
-          # Build and push
           /kaniko/executor \
             --context=/workspace/source/e2e-tests \
             --dockerfile=/workspace/source/e2e-tests/Containerfile \
             --destination=$(params.test-image-repo):pr-$(params.pull-request-number) \
             --cache=false \
             --verbosity=info
-
           echo -n "$(params.test-image-repo):pr-$(params.pull-request-number)" > $(results.test-image.path)
-          echo "✅ Image built and pushed: $(params.test-image-repo):pr-$(params.pull-request-number)"
+          echo "✅ Image built and pushed"
         else
-          echo "⏭️  Skipping build, using default image"
+          echo "⏭️  Skipping build (no changes in e2e-tests/)"
         fi
 
     - name: show-result
