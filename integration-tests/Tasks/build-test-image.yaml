@@ -5,28 +5,38 @@ metadata:
   name: build-test-image
   annotations:
     tekton.dev/displayName: 'Build E2E Test Image'
+    tekton.dev/categories: 'Build'
+    tekton.dev/tags: 'build,e2e,docker'
 spec:
   description: >-
     Check if e2e-tests directory has changes and rebuild the test image if needed.
+    If no changes, use the default image from quay.io.
   params:
     - name: git-url
       type: string
+      description: 'Git repository URL'
     - name: git-revision
       type: string
+      description: 'Git revision (commit SHA)'
     - name: target-branch
       type: string
       default: 'main'
+      description: 'Target branch to compare against'
     - name: pull-request-number
       type: string
+      description: 'Pull request number'
     - name: default-test-image
       type: string
       default: 'quay.io/konflux_ui_qe/konflux-ui-tests:latest'
+      description: 'Default test image to use if no changes detected'
     - name: test-image-repo
       type: string
       default: 'quay.io/konflux_ui_qe/konflux-ui-tests'
+      description: 'Repository to push the built test image'
     - name: quay-secret
       type: string
       default: 'quay-secret'
+      description: 'Secret containing Quay.io credentials'
   results:
     - name: test-image
       description: 'The test image to use for E2E tests'
@@ -40,63 +50,72 @@ spec:
         secretName: $(params.quay-secret)
         optional: true
   steps:
-    - name: check-and-build
-      image: gcr.io/kaniko-project/executor:debug
-      command: ['/busybox/sh', '-c']
-      workingDir: /workspace # 使用容器内的默认工作目录
+    - name: clone-and-check
+      image: alpine/git:latest
+      script: |
+        #!/bin/sh
+        set -eu
+
+        echo "=== Cloning repository and checking for changes ==="
+
+        # Clone to /workspace/source
+        git clone $(params.git-url) /workspace/source
+        cd /workspace/source
+        git checkout $(params.git-revision)
+
+        # Check if e2e-tests directory has changes compared to target branch
+        git fetch origin $(params.target-branch)
+
+        if git diff --name-only origin/$(params.target-branch)...HEAD | grep -q "^e2e-tests/"; then
+          echo "✅ Changes detected in e2e-tests/"
+          echo "true" > /workspace/build-needed
+        else
+          echo "ℹ️  No changes in e2e-tests/"
+          echo "false" > /workspace/build-needed
+          echo -n "$(params.default-test-image)" > $(results.test-image.path)
+        fi
+
+    - name: build-with-kaniko
+      image: gcr.io/kaniko-project/executor:v1.23.0
       volumeMounts:
         - name: quay-auth
           mountPath: /kaniko/.docker
-      args:
-        - |
-          set -eu
+          readOnly: true
+      env:
+        - name: DOCKER_CONFIG
+          value: /kaniko/.docker
+      script: |
+        #!/busybox/sh
+        set -eu
 
-          # 准备临时目录
-          # Kaniko 容器里没有 git，所以我们需要手动下载 alpine/git 处理源码，
-          # 或者直接在这个容器里安装 git (如果基础镜像允许)。
-          # 注意：Kaniko debug 镜像非常精简，通常没有 git。
+        BUILD_NEEDED=$(cat /workspace/build-needed)
 
-          # --- 关键修正 ---
-          # 如果 Kaniko 镜像里没有 git 命令，上面的脚本会报错 "git: not found"。
-          # 针对 Konflux，最好的办法是分成两个 Step 但“共用”同一个 Step 的本地目录是行不通的。
+        if [ "$BUILD_NEEDED" = "true" ]; then
+          echo "=== Building test image with Kaniko ==="
 
-          # 所以我们用一个折中方案：在单步内先用 busybox 逻辑判断，
-          # 或者接受“总是构建”来简化流程，或者像下面这样写：
-
-          echo "Starting process..."
-
-          # 判断逻辑需要 git。如果此镜像确实无 git，建议还是回退到多步骤，
-          # 但在 Pipeline 层级解决 Workspace 绑定（如我之前给你的 Pipeline 完整代码）。
-
-          # 假设镜像中有 git (或你换成了一个带 git 和 kaniko 的自定义镜像):
-          if command -v git >/dev/null 2>&1; then
-              mkdir -p /workspace/repo && cd /workspace/repo
-              git clone $(params.git-url) .
-              git checkout $(params.git-revision)
-              git fetch origin $(params.target-branch)
-
-              if git diff --name-only origin/$(params.target-branch)...HEAD | grep -q "^e2e-tests/"; then
-                BUILD_REQUIRED=true
-              else
-                BUILD_REQUIRED=false
-              fi
-          else
-              echo "⚠️ Git not found in this image! Defaulting to BUILD=true or use a pre-built image."
-              BUILD_REQUIRED=true
+          # Setup authentication
+          if [ -f /kaniko/.docker/.dockerconfigjson ]; then
+            cp /kaniko/.docker/.dockerconfigjson /kaniko/.docker/config.json
+            echo "✅ Quay credentials configured"
           fi
 
-          if [ "$BUILD_REQUIRED" = "true" ]; then
-            echo "🚀 Building image..."
-            if [ -f /kaniko/.docker/.dockerconfigjson ]; then
-               mkdir -p /root/.docker
-               cp /kaniko/.docker/.dockerconfigjson /root/.docker/config.json
-            fi
-            /kaniko/executor \
-              --context=/workspace/repo/e2e-tests \
-              --dockerfile=/workspace/repo/e2e-tests/Containerfile \
-              --destination=$(params.test-image-repo):pr-$(params.pull-request-number)
-            echo -n "$(params.test-image-repo):pr-$(params.pull-request-number)" > $(results.test-image.path)
-          else
-            echo "✅ No changes detected. Using default image."
-            echo -n "$(params.default-test-image)" > $(results.test-image.path)
-          fi
+          # Build and push
+          /kaniko/executor \
+            --context=/workspace/source/e2e-tests \
+            --dockerfile=/workspace/source/e2e-tests/Containerfile \
+            --destination=$(params.test-image-repo):pr-$(params.pull-request-number) \
+            --cache=false \
+            --verbosity=info
+
+          echo -n "$(params.test-image-repo):pr-$(params.pull-request-number)" > $(results.test-image.path)
+          echo "✅ Image built and pushed: $(params.test-image-repo):pr-$(params.pull-request-number)"
+        else
+          echo "⏭️  Skipping build, using default image"
+        fi
+
+    - name: show-result
+      image: alpine:latest
+      script: |
+        #!/bin/sh
+        echo ""
+        echo "📦 Final test image: $(cat $(results.test-image.path))"
