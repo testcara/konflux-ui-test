@@ -43,43 +43,97 @@ spec:
   results:
     - name: test-image
       description: 'The test image to use for E2E tests'
-  workspaces:
-    - name: dockerconfig
-      description: 'Docker config secret for registry authentication'
-      optional: true
-      mountPath: /tekton/home/.docker
+  volumes:
+    - name: quay-auth
+      secret:
+        secretName: $(params.quay-secret)
+        optional: true
+    - name: varlibcontainers
+      emptyDir: {}
   steps:
-    - name: select-test-image
-      image: quay.io/skopeo/stable:latest
+    - name: check-changes
+      image: alpine/git:latest
+      workingDir: /workspace
+      script: |
+        #!/bin/sh
+        set -eu
+
+        echo "=== Checking for e2e-tests changes ==="
+
+        # Clone the repository to a fresh directory
+        rm -rf /workspace/repo
+        git clone $(params.git-url) /workspace/repo
+        cd /workspace/repo
+        git checkout $(params.git-revision)
+
+        # Check if e2e-tests directory has changes compared to target branch
+        git fetch origin $(params.target-branch)
+
+        if git diff --name-only origin/$(params.target-branch)...HEAD | grep -q "^e2e-tests/"; then
+          echo "✅ Changes detected in e2e-tests/"
+          echo -n "true" > /workspace/needs-build
+        else
+          echo "ℹ️  No changes in e2e-tests/"
+          echo -n "false" > /workspace/needs-build
+        fi
+
+    - name: build-image
+      image: quay.io/buildah/stable:latest
+      workingDir: /workspace/repo/e2e-tests
+      volumeMounts:
+        - name: quay-auth
+          mountPath: /secrets/quay
+          readOnly: true
+        - name: varlibcontainers
+          mountPath: /var/lib/containers
       env:
-        - name: PR_TEST_IMAGE
-          value: $(params.pr-test-image)
+        - name: STORAGE_DRIVER
+          value: vfs
+        - name: IMAGE_TAG
+          value: $(params.test-image-repo):pr-$(params.pull-request-number)
         - name: DEFAULT_IMAGE
           value: $(params.default-test-image)
       script: |
-        #!/usr/bin/env bash
+        #!/bin/bash
         set -euo pipefail
 
-        echo "=== Selecting test image for E2E tests ==="
+        NEEDS_BUILD=$(cat /workspace/needs-build)
 
-        # Check if PR-specific image exists
-        if [ -n "${PR_TEST_IMAGE}" ]; then
-          echo "Checking if PR-specific image exists: ${PR_TEST_IMAGE}"
+        if [ "$NEEDS_BUILD" = "true" ]; then
+          echo "=== Building test image ==="
 
-          # Try to inspect the image (will fail if it doesn't exist)
-          if skopeo inspect --no-tags "docker://${PR_TEST_IMAGE}" > /dev/null 2>&1; then
-            echo "✅ PR-specific test image found: ${PR_TEST_IMAGE}"
-            echo "This image was built by Konflux when e2e-tests/ changes were detected"
-            echo -n "${PR_TEST_IMAGE}" > $(results.test-image.path)
+          # Setup authentication
+          if [ -f /secrets/quay/.dockerconfigjson ]; then
+            mkdir -p ${HOME}/.docker
+            cp /secrets/quay/.dockerconfigjson ${HOME}/.docker/config.json
+            echo "✅ Quay credentials configured"
           else
-            echo "ℹ️  PR-specific image not found (probably no e2e-tests/ changes)"
-            echo "Using default image: ${DEFAULT_IMAGE}"
-            echo -n "${DEFAULT_IMAGE}" > $(results.test-image.path)
+            echo "⚠️  No Quay credentials found, build may fail if pushing to private registry"
           fi
+
+          # Build the image
+          buildah --storage-driver=${STORAGE_DRIVER} bud \
+            --format=docker \
+            --tls-verify=true \
+            --no-cache \
+            -f ./Containerfile \
+            -t ${IMAGE_TAG} \
+            .
+
+          # Push the image
+          echo "=== Pushing image: ${IMAGE_TAG} ==="
+          buildah --storage-driver=${STORAGE_DRIVER} push \
+            --tls-verify=true \
+            ${IMAGE_TAG} \
+            docker://${IMAGE_TAG}
+
+          echo "✅ Image built and pushed successfully"
+          echo -n "${IMAGE_TAG}" > $(results.test-image.path)
         else
-          echo "ℹ️  No PR number provided, using default image: ${DEFAULT_IMAGE}"
+          echo "=== Using default test image ==="
+          echo "No changes detected, using: ${DEFAULT_IMAGE}"
           echo -n "${DEFAULT_IMAGE}" > $(results.test-image.path)
         fi
 
         echo ""
-        echo "📦 Final test image selected: $(cat $(results.test-image.path))"
+        echo "📦 Final test image: $(cat $(results.test-image.path))"
