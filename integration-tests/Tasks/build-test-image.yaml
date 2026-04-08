@@ -48,8 +48,6 @@ spec:
       secret:
         secretName: $(params.quay-secret)
         optional: true
-    - name: varlibcontainers
-      emptyDir: {}
   steps:
     - name: check-changes
       image: alpine/git:latest
@@ -78,54 +76,43 @@ spec:
         fi
 
     - name: build-image
-      image: quay.io/buildah/stable:latest
+      image: gcr.io/kaniko-project/executor:debug
       workingDir: /workspace/repo/e2e-tests
       volumeMounts:
         - name: quay-auth
-          mountPath: /secrets/quay
+          mountPath: /kaniko/.docker
           readOnly: true
-        - name: varlibcontainers
-          mountPath: /var/lib/containers
       env:
-        - name: STORAGE_DRIVER
-          value: vfs
         - name: IMAGE_TAG
           value: $(params.test-image-repo):pr-$(params.pull-request-number)
         - name: DEFAULT_IMAGE
           value: $(params.default-test-image)
+        - name: DOCKER_CONFIG
+          value: /kaniko/.docker
       script: |
-        #!/bin/bash
-        set -euo pipefail
+        #!/bin/sh
+        set -eu
 
         NEEDS_BUILD=$(cat /workspace/needs-build)
 
         if [ "$NEEDS_BUILD" = "true" ]; then
-          echo "=== Building test image ==="
+          echo "=== Building test image with Kaniko ==="
 
-          # Setup authentication
-          if [ -f /secrets/quay/.dockerconfigjson ]; then
-            mkdir -p ${HOME}/.docker
-            cp /secrets/quay/.dockerconfigjson ${HOME}/.docker/config.json
+          # Check if credentials are available
+          if [ -f /kaniko/.docker/.dockerconfigjson ]; then
+            cp /kaniko/.docker/.dockerconfigjson /kaniko/.docker/config.json
             echo "✅ Quay credentials configured"
           else
             echo "⚠️  No Quay credentials found, build may fail if pushing to private registry"
           fi
 
-          # Build the image
-          buildah --storage-driver=${STORAGE_DRIVER} bud \
-            --format=docker \
-            --tls-verify=true \
-            --no-cache \
-            -f ./Containerfile \
-            -t ${IMAGE_TAG} \
-            .
-
-          # Push the image
-          echo "=== Pushing image: ${IMAGE_TAG} ==="
-          buildah --storage-driver=${STORAGE_DRIVER} push \
-            --tls-verify=true \
-            ${IMAGE_TAG} \
-            docker://${IMAGE_TAG}
+          # Build and push with Kaniko
+          /kaniko/executor \
+            --context=/workspace/repo/e2e-tests \
+            --dockerfile=/workspace/repo/e2e-tests/Containerfile \
+            --destination=${IMAGE_TAG} \
+            --cache=false \
+            --verbosity=info
 
           echo "✅ Image built and pushed successfully"
           echo -n "${IMAGE_TAG}" > $(results.test-image.path)
