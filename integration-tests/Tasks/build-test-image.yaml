@@ -30,12 +30,16 @@ spec:
   results:
     - name: test-image
       description: 'The test image to use for E2E tests'
+  workspaces:
+    - name: source
+      description: 'Workspace for cloning git repo and building'
+      optional: true
   volumes:
     - name: quay-auth
       secret:
         secretName: $(params.quay-secret)
         optional: true
-  steps: # 注意：steps 现在正确缩进在 spec 下
+  steps:
     - name: check-and-build
       image: gcr.io/kaniko-project/executor:debug
       command: ['/busybox/sh', '-c']

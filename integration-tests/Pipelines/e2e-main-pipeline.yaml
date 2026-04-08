@@ -5,6 +5,10 @@ metadata:
   name: e2e-main-pipeline
   namespace: wlin-tenant
 spec:
+  workspaces:
+    - name: shared-data
+      description: Workspace for git cloning and image building state
+      optional: true
   params:
     - name: cloud-credential-key
       description: The key secret from konflux-test-infra-secret where all AWS ROSA configurations are stored.
