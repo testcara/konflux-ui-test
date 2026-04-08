@@ -51,76 +51,50 @@ spec:
   steps:
     - name: check-changes
       image: alpine/git:latest
-      workingDir: /workspace
+      workspace: source
       script: |
         #!/bin/sh
         set -eu
+        # Use the workspace path explicitly
+        cd $(workspaces.source.path)
 
-        echo "=== Checking for e2e-tests changes ==="
-
-        # Clone the repository to a fresh directory
-        rm -rf /workspace/repo
-        git clone $(params.git-url) /workspace/repo
-        cd /workspace/repo
+        # Sparse clone or full clone logic
+        git clone $(params.git-url) repo
+        cd repo
         git checkout $(params.git-revision)
-
-        # Check if e2e-tests directory has changes compared to target branch
         git fetch origin $(params.target-branch)
 
         if git diff --name-only origin/$(params.target-branch)...HEAD | grep -q "^e2e-tests/"; then
-          echo "✅ Changes detected in e2e-tests/"
-          echo -n "true" > /workspace/needs-build
+          echo "true" > $(workspaces.source.path)/needs-build
         else
-          echo "ℹ️  No changes in e2e-tests/"
-          echo -n "false" > /workspace/needs-build
+          echo "false" > $(workspaces.source.path)/needs-build
         fi
 
     - name: build-image
       image: gcr.io/kaniko-project/executor:debug
-      workingDir: /workspace/repo/e2e-tests
+      # Kaniko debug image uses /busybox/sh
+      command: ['/busybox/sh', '-c']
+      args:
+        - |
+          set -eu
+          NEEDS_BUILD=$(cat $(workspaces.source.path)/needs-build)
+
+          if [ "$NEEDS_BUILD" = "true" ]; then
+            # Setup Docker config for Kaniko
+            if [ -d /kaniko/.docker ]; then
+               mkdir -p /root/.docker
+               cp /kaniko/.docker/.dockerconfigjson /root/.docker/config.json
+            fi
+
+            /kaniko/executor \
+              --context=$(workspaces.source.path)/repo/e2e-tests \
+              --dockerfile=$(workspaces.source.path)/repo/e2e-tests/Containerfile \
+              --destination=$(params.test-image-repo):pr-$(params.pull-request-number)
+            
+            echo -n "$(params.test-image-repo):pr-$(params.pull-request-number)" > $(results.test-image.path)
+          else
+            echo -n "$(params.default-test-image)" > $(results.test-image.path)
+          fi
       volumeMounts:
         - name: quay-auth
           mountPath: /kaniko/.docker
-          readOnly: true
-      env:
-        - name: IMAGE_TAG
-          value: $(params.test-image-repo):pr-$(params.pull-request-number)
-        - name: DEFAULT_IMAGE
-          value: $(params.default-test-image)
-        - name: DOCKER_CONFIG
-          value: /kaniko/.docker
-      script: |
-        #!/bin/sh
-        set -eu
-
-        NEEDS_BUILD=$(cat /workspace/needs-build)
-
-        if [ "$NEEDS_BUILD" = "true" ]; then
-          echo "=== Building test image with Kaniko ==="
-
-          # Check if credentials are available
-          if [ -f /kaniko/.docker/.dockerconfigjson ]; then
-            cp /kaniko/.docker/.dockerconfigjson /kaniko/.docker/config.json
-            echo "✅ Quay credentials configured"
-          else
-            echo "⚠️  No Quay credentials found, build may fail if pushing to private registry"
-          fi
-
-          # Build and push with Kaniko
-          /kaniko/executor \
-            --context=/workspace/repo/e2e-tests \
-            --dockerfile=/workspace/repo/e2e-tests/Containerfile \
-            --destination=${IMAGE_TAG} \
-            --cache=false \
-            --verbosity=info
-
-          echo "✅ Image built and pushed successfully"
-          echo -n "${IMAGE_TAG}" > $(results.test-image.path)
-        else
-          echo "=== Using default test image ==="
-          echo "No changes detected, using: ${DEFAULT_IMAGE}"
-          echo -n "${DEFAULT_IMAGE}" > $(results.test-image.path)
-        fi
-
-        echo ""
-        echo "📦 Final test image: $(cat $(results.test-image.path))"
